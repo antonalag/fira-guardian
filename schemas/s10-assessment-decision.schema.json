@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fira:schema:1.0-frozen+corr1-4:s10-assessment-decision",
+  "title": "S10 TechnicalAssessment + HumanDecision",
+  "description": "S10 from schema-formalization.md. computed_by_rule is the VR7 verdict surface (recompute deferred to Task 7). VR6 encoded structurally: the FIRA-produced HumanDecision (HumanDecisionFira) state enum is restricted to {NOT_APPLICABLE, PENDING}; the full enum {NOT_APPLICABLE,PENDING,ACCEPTED,REJECTED} remains only on the external-decision input shape (HumanDecision).",
+  "$defs": {
+    "TechnicalAssessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result",
+        "blocking_findings",
+        "blocking_gates",
+        "risk_findings",
+        "risk_gates",
+        "computed_by_rule"
+      ],
+      "properties": {
+        "result": {
+          "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/TechnicalAssessmentResult"
+        },
+        "blocking_findings": {
+          "type": "array",
+          "items": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/FindingId" }
+        },
+        "blocking_gates": {
+          "type": "array",
+          "items": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/GateName" }
+        },
+        "risk_findings": {
+          "type": "array",
+          "items": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/FindingId" }
+        },
+        "risk_gates": {
+          "type": "array",
+          "items": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/GateName" }
+        },
+        "computed_by_rule": {
+          "description": "Verdict-engine rule id. VR7 surface; recompute deferred (Task 7).",
+          "type": "string"
+        }
+      }
+    },
+    "HumanDecision": {
+      "description": "External decision shape; full enum. Not what FIRA emits.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": {
+          "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/HumanDecisionState"
+        }
+      }
+    },
+    "HumanDecisionFira": {
+      "description": "FIRA-produced decision (VR6): state restricted to {NOT_APPLICABLE, PENDING}.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": {
+          "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/HumanDecisionFiraState"
+        }
+      }
+    }
+  }
+}

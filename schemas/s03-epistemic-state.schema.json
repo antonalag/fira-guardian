@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fira:schema:1.0-frozen+corr1-4:s03-epistemic-state",
+  "title": "S3 EpistemicState",
+  "description": "S3 from schema-formalization.md. Facets are a set (orthogonal, not a ladder). The VERIFIED-requires-execution-based-facet constraint (E1/VR11) is enforced by the VR validator (partly structural, completed semantically), not solely here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["facets", "conclusion"],
+  "properties": {
+    "facets": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Facet"
+      }
+    },
+    "conclusion": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/EpistemicConclusion"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "Tests",
+  "requirement_level": "required",
+  "state": "PASS",
+  "rationale": "Existing unit tests executed and passed, exercising documented behaviors.",
+  "cause": "NONE",
+  "support_mappings": [
+    {
+      "claim": "Test suite executed and passed.",
+      "evidence_refs": ["E-001"],
+      "relevant_span": "tests/parser.rs:10-40",
+      "sufficiency": "SUFFICIENT"
+    }
+  ],
+  "supporting_findings": ["RR-001"]
+}

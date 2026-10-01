@@ -1,0 +1,11 @@
+[package]
+name = "fira-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "FIRA Guardian POLICY — versioned data: the 5 built-in audit profiles, severity model, confidence-rubric parameters, release-gate rules."
+
+# POLICY is data consumed by CORE. It may depend at most on fira-core (AC-6).
+[dependencies]
+fira-core = { path = "../fira-core" }

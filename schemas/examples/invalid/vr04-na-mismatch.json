@@ -1,0 +1,8 @@
+{
+  "name": "Observability",
+  "requirement_level": "required",
+  "state": "N/A",
+  "rationale": "Marked N/A without a not_applicable requirement level.",
+  "support_mappings": [],
+  "supporting_findings": []
+}

@@ -1,0 +1,8 @@
+{
+  "result": "READY",
+  "blocking_findings": [],
+  "blocking_gates": [],
+  "risk_findings": [],
+  "risk_gates": [],
+  "computed_by_rule": "verdict-v0-surface"
+}

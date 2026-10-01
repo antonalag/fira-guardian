@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fira:schema:1.0-frozen+corr1-4:s06-requirement-family",
+  "title": "S6 Requirement family",
+  "description": "S6 from schema-formalization.md. DeclaredClaim, InferredInvariant, ReleaseRequirement, SecurityProperty.",
+  "$defs": {
+    "DeclaredClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "statement", "source_ref", "security_relevant"],
+      "properties": {
+        "id": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef" },
+        "statement": { "type": "string" },
+        "source_ref": { "type": "string" },
+        "security_relevant": { "type": "boolean" }
+      }
+    },
+    "InferredInvariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "statement", "derivation_evidence", "inferred", "code_internal_only"],
+      "properties": {
+        "id": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef" },
+        "statement": { "type": "string" },
+        "derivation_evidence": {
+          "type": "array",
+          "items": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef" }
+        },
+        "inferred": { "const": true },
+        "code_internal_only": { "const": true }
+      }
+    },
+    "ReleaseRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "statement", "from_profile", "gate"],
+      "properties": {
+        "id": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef" },
+        "statement": { "type": "string" },
+        "from_profile": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/ProfileId" },
+        "gate": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/GateName" }
+      }
+    },
+    "SecurityProperty": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "statement", "source", "underlying_ref"],
+      "properties": {
+        "id": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef" },
+        "statement": { "type": "string" },
+        "source": {
+          "type": "string",
+          "enum": ["declared", "inferred", "profile"]
+        },
+        "underlying_ref": { "type": "string" }
+      }
+    }
+  }
+}

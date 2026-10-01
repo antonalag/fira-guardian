@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fira:schema:1.0-frozen+corr1-4:s09-coverage-statement",
+  "title": "S9 CoverageStatement",
+  "description": "S9 from schema-formalization.md. Every gate must appear in >=1 coverage entry (VR8, validator). No correct/safe language (VR9, validator).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "audited_areas",
+    "skipped_areas",
+    "blocked_areas",
+    "executed_mechanisms",
+    "known_limitations",
+    "assumptions",
+    "unanchored_hypotheses"
+  ],
+  "properties": {
+    "audited_areas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["area", "depth", "result"],
+        "properties": {
+          "area": { "type": "string" },
+          "depth": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Depth" },
+          "result": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/CoverageResult" }
+        }
+      }
+    },
+    "skipped_areas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["area", "reason"],
+        "properties": {
+          "area": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "blocked_areas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["area", "blocking_condition", "execution_result_ref"],
+        "properties": {
+          "area": { "type": "string" },
+          "blocking_condition": { "type": "string" },
+          "execution_result_ref": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef" }
+        }
+      }
+    },
+    "executed_mechanisms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command_id", "outcome"],
+        "properties": {
+          "command_id": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef" },
+          "outcome": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/ExecutionOutcome" }
+        }
+      }
+    },
+    "known_limitations": { "type": "array", "items": { "type": "string" } },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "unanchored_hypotheses": { "type": "array", "items": { "type": "string" } }
+  }
+}

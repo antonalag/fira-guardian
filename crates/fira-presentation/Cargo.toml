@@ -1,0 +1,11 @@
+[package]
+name = "fira-presentation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "FIRA Guardian PRESENTATION — renders JSON/Markdown from the canonical AuditReport. Never a source of truth."
+
+# PRESENTATION renders CORE's report types; depends on fira-core only.
+[dependencies]
+fira-core = { path = "../fira-core" }

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fira:schema:1.0-frozen+corr1-4:s01-audit-request",
+  "title": "S1 AuditRequest",
+  "description": "S1 from schema-formalization.md. Invocation input (frozen contract section 18).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project_root", "release_target", "execution_boundary"],
+  "properties": {
+    "audit_id": {
+      "description": "Generated if absent.",
+      "type": "string",
+      "minLength": 1
+    },
+    "project_root": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Path"
+    },
+    "release_target": {
+      "type": "string",
+      "minLength": 1
+    },
+    "execution_boundary": {
+      "description": "MVP = {READ, EXECUTE_EXISTING}.",
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/CapabilitySet"
+    },
+    "declared_claims": {
+      "description": "-> UntrustedClaims. DeclaredClaim shape from S6.",
+      "type": "array",
+      "items": {
+        "$ref": "urn:fira:schema:1.0-frozen+corr1-4:s06-requirement-family#/$defs/DeclaredClaim"
+      }
+    },
+    "audit_profile": {
+      "description": "If absent, Core infers and human confirms.",
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/ProfileId"
+    },
+    "prior_audit_report_ref": {
+      "description": "Re-audit input.",
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Path"
+    },
+    "requested_depth": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Depth"
+    }
+  }
+}

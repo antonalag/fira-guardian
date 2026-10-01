@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0.0",
+  "audit_id": "aud-vr01",
+  "created_at": "2026-09-16T10:00:00Z",
+  "request": {
+    "project_root": "/repos/acme-lib",
+    "release_target": "v1.2.0",
+    "execution_boundary": ["READ", "EXECUTE_EXISTING"]
+  },
+  "applied_profile": { "profile_id": "library", "version": "1.0.0", "gates": [ { "gate": "Tests", "requirement_level": "required" } ], "na_overrides": [] },
+  "system_model_summary": "s",
+  "verification_mechanisms": [ { "id": "cmd-tests", "source": "MAKE", "source_locator": "Makefile:12", "command": "cargo test", "declared_by_project": true } ],
+  "divergence_records": [],
+  "findings": [
+    {
+      "id": "RR-001",
+      "maturity": "FINDING",
+      "title": "Published finding with only INSUFFICIENT support",
+      "severity": "LOW",
+      "confidence": "LOW",
+      "confidence_derivation": "x",
+      "category": "input-validation",
+      "requirement_source": "declared_claim",
+      "gates_affected": ["Tests"],
+      "epistemic_state": { "facets": ["IMPLEMENTED"], "conclusion": "UNVERIFIED" },
+      "support_mappings": [
+        { "claim": "c", "evidence_refs": ["E-001"], "relevant_span": "s", "sufficiency": "INSUFFICIENT", "unverified_remainder": "everything" }
+      ],
+      "impact": "i",
+      "release_impact": "NON_BLOCKING",
+      "recommended_remediation": "r",
+      "verification_criteria": "v",
+      "lifecycle_status": "OPEN",
+      "regression": false
+    }
+  ],
+  "gates": [
+    { "name": "Tests", "requirement_level": "required", "state": "UNKNOWN", "rationale": "r", "support_mappings": [], "supporting_findings": ["RR-001"] }
+  ],
+  "coverage": {
+    "audited_areas": [ { "area": "Tests", "depth": "STANDARD", "result": "ISSUES_FOUND" } ],
+    "skipped_areas": [], "blocked_areas": [],
+    "executed_mechanisms": [ { "command_id": "cmd-tests", "outcome": "NOT_RUN" } ],
+    "known_limitations": [], "assumptions": [], "unanchored_hypotheses": []
+  },
+  "technical_assessment": { "result": "NOT_READY", "blocking_findings": [], "blocking_gates": ["Tests"], "risk_findings": [], "risk_gates": [], "computed_by_rule": "r" },
+  "human_decision": { "state": "PENDING" },
+  "determinism_inputs_hash": "sha256:00"
+}

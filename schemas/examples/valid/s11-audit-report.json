@@ -1,0 +1,112 @@
+{
+  "schema_version": "1.0.0",
+  "audit_id": "aud-0001",
+  "created_at": "2026-09-16T10:00:00Z",
+  "request": {
+    "audit_id": "aud-0001",
+    "project_root": "/repos/acme-lib",
+    "release_target": "v1.2.0",
+    "execution_boundary": ["READ", "EXECUTE_EXISTING"],
+    "audit_profile": "library",
+    "requested_depth": "STANDARD"
+  },
+  "applied_profile": {
+    "profile_id": "library",
+    "version": "1.0.0",
+    "gates": [
+      { "gate": "Tests", "requirement_level": "required" }
+    ],
+    "na_overrides": []
+  },
+  "system_model_summary": "Single-crate parsing library with an existing unit test suite.",
+  "verification_mechanisms": [
+    {
+      "id": "cmd-tests",
+      "source": "MAKE",
+      "source_locator": "Makefile:12",
+      "command": "cargo test",
+      "declared_by_project": true
+    }
+  ],
+  "divergence_records": [
+    {
+      "blind_observation_ref": "E-001",
+      "narrative_claim_ref": "DC-001",
+      "divergence_type": "DOC_MATCHES"
+    }
+  ],
+  "findings": [
+    {
+      "id": "RR-001",
+      "maturity": "FINDING",
+      "title": "Parser rejection path exercised by tests",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "confidence_derivation": "execution-based facet present with SUFFICIENT mapping",
+      "category": "input-validation",
+      "requirement_source": "declared_claim",
+      "gates_affected": ["Tests"],
+      "epistemic_state": {
+        "facets": ["IMPLEMENTED", "TESTED", "OBSERVED"],
+        "conclusion": "VERIFIED"
+      },
+      "support_mappings": [
+        {
+          "claim": "Unit tests exercise the parser rejection path.",
+          "evidence_refs": ["E-001"],
+          "relevant_span": "tests/parser.rs:10-40",
+          "sufficiency": "SUFFICIENT"
+        }
+      ],
+      "impact": "Malformed input is handled as documented.",
+      "release_impact": "NON_BLOCKING",
+      "recommended_remediation": "None required.",
+      "verification_criteria": "Re-run cargo test; rejection cases PASS.",
+      "lifecycle_status": "OPEN",
+      "regression": false
+    }
+  ],
+  "gates": [
+    {
+      "name": "Tests",
+      "requirement_level": "required",
+      "state": "PASS",
+      "rationale": "Existing unit tests executed and passed, exercising documented behaviors.",
+      "cause": "NONE",
+      "support_mappings": [
+        {
+          "claim": "Test suite executed and passed.",
+          "evidence_refs": ["E-001"],
+          "relevant_span": "tests/parser.rs:10-40",
+          "sufficiency": "SUFFICIENT"
+        }
+      ],
+      "supporting_findings": ["RR-001"]
+    }
+  ],
+  "coverage": {
+    "audited_areas": [
+      { "area": "Tests", "depth": "STANDARD", "result": "NO_ISSUE_FOUND" }
+    ],
+    "skipped_areas": [],
+    "blocked_areas": [],
+    "executed_mechanisms": [
+      { "command_id": "cmd-tests", "outcome": "PASSED" }
+    ],
+    "known_limitations": ["Only existing test mechanisms were executed."],
+    "assumptions": ["Build environment matches CI."],
+    "unanchored_hypotheses": []
+  },
+  "technical_assessment": {
+    "result": "READY",
+    "blocking_findings": [],
+    "blocking_gates": [],
+    "risk_findings": [],
+    "risk_gates": [],
+    "computed_by_rule": "verdict-v0-surface"
+  },
+  "human_decision": {
+    "state": "NOT_APPLICABLE"
+  },
+  "determinism_inputs_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+}

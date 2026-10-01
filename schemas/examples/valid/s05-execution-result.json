@@ -1,0 +1,8 @@
+{
+  "command_id": "cmd-tests",
+  "command": "cargo test",
+  "outcome": "PASSED",
+  "classification": "APP_LEVEL",
+  "captured_output": "test result: ok. 42 passed; 0 failed",
+  "exercised_behaviors": ["parser rejects malformed input"]
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fira:schema:1.0-frozen+corr1-4:s05-execution-result",
+  "title": "S5 ExecutionResult",
+  "description": "S5 from schema-formalization.md. command_id is FK -> VerificationMechanism.id (VR12, enforced by validator).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command_id", "command", "outcome", "captured_output", "exercised_behaviors"],
+  "properties": {
+    "command_id": {
+      "description": "FK -> VerificationMechanism.id (VR12).",
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef"
+    },
+    "command": { "type": "string" },
+    "outcome": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/ExecutionOutcome"
+    },
+    "classification": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/ExecutionClassification"
+    },
+    "blocking_condition": { "type": "string" },
+    "captured_output": { "type": "string" },
+    "exercised_behaviors": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

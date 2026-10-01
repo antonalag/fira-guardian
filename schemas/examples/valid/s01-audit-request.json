@@ -1,0 +1,16 @@
+{
+  "audit_id": "aud-0001",
+  "project_root": "/repos/acme-lib",
+  "release_target": "v1.2.0",
+  "execution_boundary": ["READ", "EXECUTE_EXISTING"],
+  "declared_claims": [
+    {
+      "id": "DC-001",
+      "statement": "The parser rejects malformed input without panicking.",
+      "source_ref": "README.md:sec-safety",
+      "security_relevant": false
+    }
+  ],
+  "audit_profile": "library",
+  "requested_depth": "STANDARD"
+}

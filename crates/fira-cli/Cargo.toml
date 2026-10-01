@@ -1,0 +1,15 @@
+[package]
+name = "fira-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "FIRA Guardian CLI — first adapter entrypoint. Task 1: version shell only, no audit logic."
+
+[[bin]]
+name = "fira-guardian"
+path = "src/main.rs"
+
+[dependencies]
+fira-adapters = { path = "../fira-adapters" }
+fira-core = { path = "../fira-core" }

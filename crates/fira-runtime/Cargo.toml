@@ -1,0 +1,11 @@
+[package]
+name = "fira-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "FIRA Guardian RUNTIME — capability enforcement {READ, EXECUTE_EXISTING}, VerificationMechanism registry (EXEC-1), ExecutionResult production, external-workspace persistence (WS-1). No project-tree writes."
+
+[dependencies]
+fira-core = { path = "../fira-core" }
+fira-policy = { path = "../fira-policy" }

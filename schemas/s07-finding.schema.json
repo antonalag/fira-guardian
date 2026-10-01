@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fira:schema:1.0-frozen+corr1-4:s07-finding",
+  "title": "S7 Finding + FailureScenario + Confidence",
+  "description": "S7 from schema-formalization.md. confidence + confidence_derivation are the VR5 surface (DERIVED, not model-set; recompute deferred to Task 6). support_mappings >=1 and >=1 SUFFICIENT is VR1/VR5 (validator). failure_scenario.anchor required for concurrency/durability/recovery is VR2 (validator). BLOCKER source constraint is VR10 (validator).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "maturity",
+    "title",
+    "severity",
+    "confidence",
+    "confidence_derivation",
+    "category",
+    "requirement_source",
+    "gates_affected",
+    "epistemic_state",
+    "support_mappings",
+    "impact",
+    "release_impact",
+    "recommended_remediation",
+    "verification_criteria",
+    "lifecycle_status",
+    "regression"
+  ],
+  "properties": {
+    "id": {
+      "description": "RR-NNN stable.",
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/FindingId"
+    },
+    "maturity": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Maturity"
+    },
+    "title": { "type": "string" },
+    "severity": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Severity"
+    },
+    "confidence": {
+      "description": "DERIVED (CONF-1), not model-set. VR5 surface. Recompute deferred (Task 6).",
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Confidence"
+    },
+    "confidence_derivation": {
+      "description": "Rubric branch that produced confidence (audit trail). VR5 surface.",
+      "type": "string"
+    },
+    "category": { "type": "string" },
+    "requirement_source": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/RequirementSource"
+    },
+    "security_property": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source"],
+      "properties": {
+        "source": {
+          "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/SecurityPropertySource"
+        }
+      }
+    },
+    "gates_affected": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/GateName"
+      }
+    },
+    "epistemic_state": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:s03-epistemic-state"
+    },
+    "support_mappings": {
+      "description": ">=1 (VR1). >=1 SUFFICIENT for any level (CONF-2/VR1/VR5) enforced by validator.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "urn:fira:schema:1.0-frozen+corr1-4:s04-evidence-support-mapping#/$defs/SupportMapping"
+      }
+    },
+    "failure_scenario": {
+      "description": "Required for concurrency/durability/recovery (VR2, validator).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anchor", "trigger", "consequence"],
+      "properties": {
+        "anchor": {
+          "description": "file:line-range.",
+          "type": "string",
+          "minLength": 1
+        },
+        "trigger": { "type": "string" },
+        "consequence": { "type": "string" }
+      }
+    },
+    "impact": { "type": "string" },
+    "release_impact": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/ReleaseImpact"
+    },
+    "recommended_remediation": { "type": "string" },
+    "verification_criteria": { "type": "string" },
+    "lifecycle_status": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/LifecycleStatus"
+    },
+    "regression": { "type": "boolean" }
+  }
+}

@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fira-core",
+    "crates/fira-policy",
+    "crates/fira-runtime",
+    "crates/fira-presentation",
+    "crates/fira-adapters",
+    "crates/fira-cli",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.74"
+
+# Frozen MVP Contract version this workspace is built against.
+# Source of truth: /CONTRACT_VERSION and fira-core::CONTRACT_VERSION.

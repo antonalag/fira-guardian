@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fira:schema:1.0-frozen+corr1-4:s08-gate",
+  "title": "S8 Gate",
+  "description": "S8 from schema-formalization.md. VR4 (state=N/A iff requirement_level=not_applicable) encoded structurally in both directions via if/then/else.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "requirement_level", "state", "rationale", "support_mappings", "supporting_findings"],
+  "properties": {
+    "name": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/GateName"
+    },
+    "requirement_level": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/RequirementLevel"
+    },
+    "state": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/GateState"
+    },
+    "rationale": { "type": "string" },
+    "cause": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/GateCause"
+    },
+    "support_mappings": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:fira:schema:1.0-frozen+corr1-4:s04-evidence-support-mapping#/$defs/SupportMapping"
+      }
+    },
+    "supporting_findings": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/FindingId"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "state": { "const": "N/A" } },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": { "requirement_level": { "const": "not_applicable" } },
+        "required": ["requirement_level"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "requirement_level": { "const": "not_applicable" } },
+        "required": ["requirement_level"]
+      },
+      "then": {
+        "properties": { "state": { "const": "N/A" } },
+        "required": ["state"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "id": "RR-010",
+  "maturity": "FINDING",
+  "title": "BLOCKER finding with an out-of-enum requirement_source",
+  "severity": "HIGH",
+  "confidence": "HIGH",
+  "confidence_derivation": "execution-based facet present with SUFFICIENT mapping",
+  "category": "input-validation",
+  "requirement_source": "made_up_source",
+  "gates_affected": ["Tests"],
+  "epistemic_state": { "facets": ["OBSERVED"], "conclusion": "VERIFIED" },
+  "support_mappings": [
+    { "claim": "c", "evidence_refs": ["E-001"], "relevant_span": "s", "sufficiency": "SUFFICIENT" }
+  ],
+  "impact": "i",
+  "release_impact": "BLOCKER",
+  "recommended_remediation": "r",
+  "verification_criteria": "v",
+  "lifecycle_status": "OPEN",
+  "regression": false
+}

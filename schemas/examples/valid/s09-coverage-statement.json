@@ -1,0 +1,15 @@
+{
+  "audited_areas": [
+    { "area": "parser", "depth": "STANDARD", "result": "NO_ISSUE_FOUND" }
+  ],
+  "skipped_areas": [
+    { "area": "networking", "reason": "not present in this library" }
+  ],
+  "blocked_areas": [],
+  "executed_mechanisms": [
+    { "command_id": "cmd-tests", "outcome": "PASSED" }
+  ],
+  "known_limitations": ["Only existing test mechanisms were executed."],
+  "assumptions": ["Build environment matches CI."],
+  "unanchored_hypotheses": []
+}

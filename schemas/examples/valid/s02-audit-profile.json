@@ -1,0 +1,15 @@
+{
+  "profile_id": "library",
+  "version": "1.0.0",
+  "description": "Reusable library profile.",
+  "gates": [
+    { "gate": "Build", "requirement_level": "required" },
+    { "gate": "Tests", "requirement_level": "required" },
+    { "gate": "PersistenceDurability", "requirement_level": "not_applicable", "na_justification": "Library holds no persistent state." }
+  ],
+  "focus_areas": ["public API stability", "input validation"],
+  "typical_failure_modes": ["unhandled edge-case inputs"],
+  "minimum_evidence_expectations": [
+    { "gate": "Tests", "expectation": "Existing unit tests execute and PASS." }
+  ]
+}

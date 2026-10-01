@@ -1,0 +1,7 @@
+{
+  "id": "cmd-tests",
+  "source": "MAKE",
+  "source_locator": "Makefile:12",
+  "command": "cargo test",
+  "declared_by_project": true
+}

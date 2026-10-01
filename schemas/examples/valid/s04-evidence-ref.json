@@ -1,0 +1,7 @@
+{
+  "ref_id": "E-001",
+  "type": "COMMAND",
+  "locator": "cmd-tests",
+  "valid": true,
+  "captured_output_ref": "cmd-tests"
+}

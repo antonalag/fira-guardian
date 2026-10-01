@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common",
+  "title": "FIRA Guardian shared $defs (common)",
+  "description": "Shared building blocks referenced by S1-S12. Enums, gate names, capability sets, and id patterns copied verbatim from docs/contract/schema-formalization.md and frozen-mvp-contract.md (v1.0-frozen+corr1-4). No new values.",
+  "$defs": {
+    "GateName": {
+      "description": "The 11 gates (frozen contract section 20).",
+      "type": "string",
+      "enum": [
+        "Build",
+        "Tests",
+        "Requirements",
+        "Correctness",
+        "FailureRecovery",
+        "PersistenceDurability",
+        "Concurrency",
+        "Security",
+        "Observability",
+        "Documentation",
+        "OperationalReadiness"
+      ]
+    },
+    "Capability": {
+      "description": "MVP project-tree capabilities (CAP-1). MVP = {READ, EXECUTE_EXISTING}.",
+      "type": "string",
+      "enum": ["READ", "EXECUTE_EXISTING"]
+    },
+    "CapabilitySet": {
+      "description": "A set of capabilities; MVP execution_boundary = {READ, EXECUTE_EXISTING}.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/Capability" },
+      "uniqueItems": true
+    },
+    "ProfileId": {
+      "description": "The 5 built-in profiles (frozen contract section 20, S2).",
+      "type": "string",
+      "enum": [
+        "library",
+        "cli_tool",
+        "web_service",
+        "stateful_distributed",
+        "batch_pipeline"
+      ]
+    },
+    "RequirementLevel": {
+      "type": "string",
+      "enum": ["required", "recommended", "not_applicable"]
+    },
+    "Facet": {
+      "description": "EpistemicState facets (S3, frozen contract section 3). Orthogonal, not a ladder.",
+      "type": "string",
+      "enum": ["SPECIFIED", "IMPLEMENTED", "TESTED", "OBSERVED"]
+    },
+    "EpistemicConclusion": {
+      "type": "string",
+      "enum": ["VERIFIED", "UNVERIFIED"]
+    },
+    "EvidenceType": {
+      "type": "string",
+      "enum": ["CODE", "TEST", "CONFIG", "COMMAND", "DOC"]
+    },
+    "Sufficiency": {
+      "type": "string",
+      "enum": ["SUFFICIENT", "INSUFFICIENT"]
+    },
+    "ExecutionOutcome": {
+      "type": "string",
+      "enum": ["PASSED", "FAILED", "NOT_RUN", "BLOCKED", "TIMEOUT", "ERROR"]
+    },
+    "ExecutionClassification": {
+      "type": "string",
+      "enum": ["APP_LEVEL", "INFRA_LEVEL", "UNCLASSIFIED"]
+    },
+    "VerificationMechanismSource": {
+      "type": "string",
+      "enum": ["MAVEN", "GRADLE", "NPM", "MAKE", "CI", "DOCKER", "SCRIPT", "OTHER"]
+    },
+    "Maturity": {
+      "description": "Finding maturity (S7). OBSERVATION/HYPOTHESIS live in coverage appendix; publishable maturities are FINDING and RISK.",
+      "type": "string",
+      "enum": ["FINDING", "RISK"]
+    },
+    "Severity": {
+      "type": "string",
+      "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+    },
+    "Confidence": {
+      "description": "Derived confidence (CONF-1); never model-set. LOW != INSUFFICIENT (CONF-2).",
+      "type": "string",
+      "enum": ["HIGH", "MEDIUM", "LOW"]
+    },
+    "RequirementSource": {
+      "type": "string",
+      "enum": ["declared_claim", "inferred_invariant", "release_requirement"]
+    },
+    "SecurityPropertySource": {
+      "type": "string",
+      "enum": ["declared", "inferred", "profile"]
+    },
+    "ReleaseImpact": {
+      "type": "string",
+      "enum": ["BLOCKER", "RISK", "NON_BLOCKING"]
+    },
+    "LifecycleStatus": {
+      "type": "string",
+      "enum": ["OPEN", "FIX_CLAIMED", "VERIFIED_FIXED", "REOPENED", "WONT_FIX"]
+    },
+    "GateState": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "PARTIAL", "UNKNOWN", "N/A"]
+    },
+    "GateCause": {
+      "type": "string",
+      "enum": ["APP", "INFRA", "NONE"]
+    },
+    "Depth": {
+      "type": "string",
+      "enum": ["SHALLOW", "STANDARD", "DEEP"]
+    },
+    "CoverageResult": {
+      "type": "string",
+      "enum": ["NO_ISSUE_FOUND", "ISSUES_FOUND"]
+    },
+    "TechnicalAssessmentResult": {
+      "type": "string",
+      "enum": ["READY", "READY_WITH_RISKS", "NOT_READY"]
+    },
+    "HumanDecisionState": {
+      "description": "Full external HumanDecision enum (S10). FIRA-produced path is restricted to {NOT_APPLICABLE, PENDING} (VR6) via HumanDecisionFiraState.",
+      "type": "string",
+      "enum": ["NOT_APPLICABLE", "PENDING", "ACCEPTED", "REJECTED"]
+    },
+    "HumanDecisionFiraState": {
+      "description": "FIRA-produced HumanDecision state (VR6). FIRA sets only NOT_APPLICABLE | PENDING; never ACCEPTED/REJECTED.",
+      "type": "string",
+      "enum": ["NOT_APPLICABLE", "PENDING"]
+    },
+    "DivergenceType": {
+      "type": "string",
+      "enum": ["DOC_OVERCLAIMS", "DOC_UNDERCLAIMS", "DOC_CONTRADICTS_IMPL", "DOC_MATCHES"]
+    },
+    "IdRef": {
+      "description": "Generic non-empty identifier string used for cross-references (ref_id, command_id, finding_id, etc.).",
+      "type": "string",
+      "minLength": 1
+    },
+    "FindingId": {
+      "description": "Stable finding id, RR-NNN form (S7).",
+      "type": "string",
+      "pattern": "^RR-[0-9]{3,}$"
+    },
+    "Semver": {
+      "description": "Semantic version string (major.minor.patch, optional pre-release/build).",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?$"
+    },
+    "Path": {
+      "description": "Filesystem-style path string.",
+      "type": "string",
+      "minLength": 1
+    },
+    "Timestamp": {
+      "description": "ISO-8601 timestamp string.",
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

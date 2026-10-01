@@ -1,0 +1,13 @@
+[package]
+name = "fira-adapters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "FIRA Guardian ADAPTERS — bind host environments (CLI first, Kiro second) to CORE capability interfaces. Transport, capability binding, persistence location, human-confirmation UX."
+
+[dependencies]
+fira-core = { path = "../fira-core" }
+fira-policy = { path = "../fira-policy" }
+fira-runtime = { path = "../fira-runtime" }
+fira-presentation = { path = "../fira-presentation" }

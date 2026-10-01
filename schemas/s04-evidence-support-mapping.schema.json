@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fira:schema:1.0-frozen+corr1-4:s04-evidence-support-mapping",
+  "title": "S4 EvidenceRef + SupportMapping",
+  "description": "S4 from schema-formalization.md. Two co-equal shapes. VR3 (captured_output_ref present iff type=COMMAND) is encoded structurally on EvidenceRef via if/then/else (both directions). SupportMapping requires unverified_remainder when sufficiency != SUFFICIENT.",
+  "$defs": {
+    "EvidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref_id", "type", "locator", "valid"],
+      "properties": {
+        "ref_id": {
+          "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef"
+        },
+        "type": {
+          "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/EvidenceType"
+        },
+        "locator": {
+          "description": "file:line-range | test_id | config:key | command_id | doc:section",
+          "type": "string",
+          "minLength": 1
+        },
+        "valid": { "type": "boolean" },
+        "captured_output_ref": {
+          "description": "command_id; required iff type=COMMAND (VR3).",
+          "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef"
+        }
+      },
+      "if": {
+        "properties": { "type": { "const": "COMMAND" } },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["captured_output_ref"]
+      },
+      "else": {
+        "not": { "required": ["captured_output_ref"] }
+      }
+    },
+    "SupportMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim", "evidence_refs", "relevant_span", "sufficiency"],
+      "properties": {
+        "claim": { "type": "string" },
+        "evidence_refs": {
+          "description": ">=1 ref_id.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef"
+          }
+        },
+        "relevant_span": { "type": "string" },
+        "sufficiency": {
+          "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Sufficiency"
+        },
+        "unverified_remainder": {
+          "description": "Required if sufficiency != SUFFICIENT.",
+          "type": "string"
+        }
+      },
+      "if": {
+        "properties": { "sufficiency": { "const": "SUFFICIENT" } },
+        "required": ["sufficiency"]
+      },
+      "then": true,
+      "else": {
+        "required": ["unverified_remainder"]
+      }
+    }
+  }
+}

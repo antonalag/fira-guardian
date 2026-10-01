@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fira:schema:1.0-frozen+corr1-4:s12-verification-mechanism",
+  "title": "S12 VerificationMechanism",
+  "description": "S12 from schema-formalization.md. declared_by_project is always true; never synthesized (EXEC-1/VR12).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "source", "source_locator", "command", "declared_by_project"],
+  "properties": {
+    "id": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef" },
+    "source": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/VerificationMechanismSource"
+    },
+    "source_locator": {
+      "description": "file:line of declaration.",
+      "type": "string",
+      "minLength": 1
+    },
+    "command": { "type": "string" },
+    "declared_by_project": {
+      "description": "Always true; never synthesized (EXEC-1/VR12).",
+      "const": true
+    }
+  }
+}

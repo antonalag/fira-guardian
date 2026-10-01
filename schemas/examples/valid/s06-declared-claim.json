@@ -1,0 +1,6 @@
+{
+  "id": "DC-001",
+  "statement": "The parser rejects malformed input without panicking.",
+  "source_ref": "README.md:sec-safety",
+  "security_relevant": false
+}

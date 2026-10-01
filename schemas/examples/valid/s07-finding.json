@@ -1,0 +1,29 @@
+{
+  "id": "RR-001",
+  "maturity": "FINDING",
+  "title": "Parser rejection path exercised by tests",
+  "severity": "LOW",
+  "confidence": "HIGH",
+  "confidence_derivation": "execution-based facet present with SUFFICIENT mapping",
+  "category": "input-validation",
+  "requirement_source": "declared_claim",
+  "gates_affected": ["Tests"],
+  "epistemic_state": {
+    "facets": ["IMPLEMENTED", "TESTED", "OBSERVED"],
+    "conclusion": "VERIFIED"
+  },
+  "support_mappings": [
+    {
+      "claim": "Unit tests exercise the parser rejection path.",
+      "evidence_refs": ["E-001"],
+      "relevant_span": "tests/parser.rs:10-40",
+      "sufficiency": "SUFFICIENT"
+    }
+  ],
+  "impact": "Malformed input is handled as documented.",
+  "release_impact": "NON_BLOCKING",
+  "recommended_remediation": "None required.",
+  "verification_criteria": "Re-run cargo test; rejection cases PASS.",
+  "lifecycle_status": "OPEN",
+  "regression": false
+}

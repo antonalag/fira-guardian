@@ -1,0 +1,6 @@
+{
+  "claim": "Unit tests exercise the parser rejection path.",
+  "evidence_refs": ["E-001"],
+  "relevant_span": "tests/parser.rs:10-40",
+  "sufficiency": "SUFFICIENT"
+}

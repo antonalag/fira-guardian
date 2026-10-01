@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fira:schema:1.0-frozen+corr1-4:s11-audit-report",
+  "title": "S11 AuditReport (canonical)",
+  "description": "S11 from schema-formalization.md. The canonical machine report. human_decision uses the FIRA-produced HumanDecisionFira variant (VR6). determinism_inputs_hash is part of the VR7 verdict surface (recompute deferred to Task 7). VR9 (no correct/safe language) and VR13 (no write path under project_root) are validator-enforced.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "audit_id",
+    "created_at",
+    "request",
+    "applied_profile",
+    "system_model_summary",
+    "verification_mechanisms",
+    "divergence_records",
+    "findings",
+    "gates",
+    "coverage",
+    "technical_assessment",
+    "human_decision",
+    "determinism_inputs_hash"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Semver"
+    },
+    "audit_id": { "type": "string", "minLength": 1 },
+    "created_at": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Timestamp"
+    },
+    "request": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:s01-audit-request"
+    },
+    "applied_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile_id", "version", "gates", "na_overrides"],
+      "properties": {
+        "profile_id": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/ProfileId" },
+        "version": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Semver" },
+        "gates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["gate", "requirement_level"],
+            "properties": {
+              "gate": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/GateName" },
+              "requirement_level": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/RequirementLevel" },
+              "na_justification": { "type": "string" }
+            }
+          }
+        },
+        "na_overrides": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["gate", "by"],
+            "properties": {
+              "gate": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/GateName" },
+              "by": { "const": "human" }
+            }
+          }
+        }
+      }
+    },
+    "system_model_summary": { "type": "string" },
+    "verification_mechanisms": {
+      "description": "Discovered registry. FK target set for VR12.",
+      "type": "array",
+      "items": {
+        "$ref": "urn:fira:schema:1.0-frozen+corr1-4:s12-verification-mechanism"
+      }
+    },
+    "divergence_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["blind_observation_ref", "narrative_claim_ref", "divergence_type"],
+        "properties": {
+          "blind_observation_ref": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef" },
+          "narrative_claim_ref": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/IdRef" },
+          "divergence_type": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/DivergenceType" },
+          "resulting_finding": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/FindingId" }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:s07-finding" }
+    },
+    "gates": {
+      "type": "array",
+      "items": { "$ref": "urn:fira:schema:1.0-frozen+corr1-4:s08-gate" }
+    },
+    "coverage": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:s09-coverage-statement"
+    },
+    "technical_assessment": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:s10-assessment-decision#/$defs/TechnicalAssessment"
+    },
+    "human_decision": {
+      "description": "FIRA-produced (VR6): restricted to {NOT_APPLICABLE, PENDING}.",
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:s10-assessment-decision#/$defs/HumanDecisionFira"
+    },
+    "prior_report_ref": {
+      "$ref": "urn:fira:schema:1.0-frozen+corr1-4:_defs:common#/$defs/Path"
+    },
+    "determinism_inputs_hash": {
+      "description": "Hash of structured state fed to verdict engine. VR7 surface.",
+      "type": "string"
+    }
+  }
+}
