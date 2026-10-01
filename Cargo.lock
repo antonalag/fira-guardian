@@ -283,6 +283,7 @@ name = "fira-core"
 version = "0.0.0"
 dependencies = [
  "jsonschema",
+ "serde",
  "serde_json",
  "toml",
  "url",
