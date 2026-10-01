@@ -9,10 +9,13 @@
 //! capability. It owns the domain model, engines, and abstract capability
 //! interfaces — but talks to the outside world only through those interfaces.
 //!
-//! ## Task 1 scope
-//! This file establishes the module *homes* that later tasks fill. No domain
-//! logic, schemas-as-code, engines, or capability implementations exist yet;
-//! each module is an empty home naming its owning contract section and task.
+//! ## Scope note
+//! Task 1 established the module *homes*. Task 2 added the `validation` module
+//! (VR validator over JSON values). Task 4 fills the domain-model homes it owns
+//! (S1/S3/S6/S7/S8/S9/S10/S11) with `serde`-(de)serializable Rust types, plus a
+//! shared [`model`] module of frozen enums/newtypes. The confidence rubric
+//! (Task 6), verdict engine (Task 7), the final S4/S5/S12 types and capability
+//! interfaces (Task 5), and the S2 profile data (Task 8) are **not** here.
 
 /// Frozen MVP Contract version this build targets.
 ///
@@ -21,37 +24,57 @@
 pub const CONTRACT_VERSION: &str = "1.0-frozen+corr1-4";
 
 // ---------------------------------------------------------------------------
-// Module homes (empty in Task 1). Each names its schema and owning task.
-// No fields, types with behavior, or logic are introduced here in Task 1.
+// Shared model building blocks (Task 4): frozen enums + id newtypes.
 // ---------------------------------------------------------------------------
 
+/// Shared enums and id newtypes referenced across the domain model (Task 4).
+pub mod model;
+
+// ---------------------------------------------------------------------------
+// CORE domain model (Task 4-owned schemas: S1, S3, S6, S7, S8, S9, S10, S11).
+// ---------------------------------------------------------------------------
+
+/// AuditRequest (S1). Invocation input (frozen contract §18).
+pub mod request;
+
 /// EpistemicState (S3). Implemented in Task 4.
-pub mod epistemic {}
+pub mod epistemic;
 
 /// Claim / Requirement / Invariant family (S6). Implemented in Task 4.
-pub mod requirement {}
+pub mod requirement;
 
-/// EvidenceRef + SupportMapping (S4). Implemented in Task 5.
-pub mod evidence {}
-
-/// ExecutionResult + VerificationMechanism (S5 / S12). Implemented in Task 5.
-pub mod execution {}
-
-/// Finding + FailureScenario + Confidence (S7). Implemented in Task 4 / 6.
-pub mod finding {}
+/// Finding + FailureScenario + Confidence (S7). Types in Task 4; the confidence
+/// rubric (VR5) is Task 6 — `confidence`/`confidence_derivation` are plain data.
+pub mod finding;
 
 /// Gate (S8). Implemented in Task 4.
-pub mod gate {}
+pub mod gate;
 
 /// CoverageStatement (S9). Implemented in Task 4.
-pub mod coverage {}
+pub mod coverage;
 
-/// TechnicalAssessment + HumanDecision (S10). Implemented in Task 4 / 7.
-pub mod assessment {}
+/// TechnicalAssessment + HumanDecision (S10). Types in Task 4; the verdict
+/// engine (VR7) is Task 7 — `computed_by_rule` is plain data.
+pub mod assessment;
 
-/// AuditReport (S11), including verification_mechanisms registry,
-/// determinism_inputs_hash, divergence_records. Implemented in Task 4.
-pub mod report {}
+/// AuditReport (S11), including the verification_mechanisms registry,
+/// determinism_inputs_hash, and divergence_records. Implemented in Task 4.
+pub mod report;
+
+// ---------------------------------------------------------------------------
+// Task-5-owned homes. Task 4 introduces only PROVISIONAL structural seam types
+// here (S4 SupportMapping / EvidenceRef, S5 ExecutionResult, S12
+// VerificationMechanism) so the Task-4 owners can be typed and round-trip the
+// Task 2 fixtures. These are finalized/owned by Task 5 — no semantics here.
+// ---------------------------------------------------------------------------
+
+/// EvidenceRef + SupportMapping (S4). Provisional seam types only (Task 4);
+/// finalized in Task 5.
+pub mod evidence;
+
+/// ExecutionResult + VerificationMechanism (S5 / S12). Provisional seam types
+/// only (Task 4); finalized in Task 5.
+pub mod execution;
 
 /// Abstract capability interfaces: RepositoryReader, CommandExecutor,
 /// EvidenceCollector, AuditContextProvider. Implemented in Task 5 / 9.

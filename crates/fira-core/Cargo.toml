@@ -10,10 +10,12 @@ description = "FIRA Guardian CORE — platform-independent audit domain. No sibl
 # It must NOT depend on fira-policy, fira-runtime, fira-adapters,
 # fira-presentation, or fira-cli. This is enforced by manifest_test (AC-5).
 #
-# serde_json is a pure, host-capability-free JSON value/parse library. It grants
-# no filesystem, process, or network capability, so it does not weaken CORE's
+# serde and serde_json are pure, host-capability-free data libraries. They grant
+# no filesystem, process, or network capability, so they do not weaken CORE's
 # platform independence (the no-fs/no-proc tripwire still applies to our source).
+# serde (derive) backs the Task 4 CORE domain model (de)serialization.
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [dev-dependencies]
