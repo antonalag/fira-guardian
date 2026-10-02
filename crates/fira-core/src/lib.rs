@@ -62,28 +62,28 @@ pub mod assessment;
 pub mod report;
 
 // ---------------------------------------------------------------------------
-// Task-5-owned homes. Task 4 introduces only PROVISIONAL structural seam types
-// here (S4 SupportMapping / EvidenceRef, S5 ExecutionResult, S12
-// VerificationMechanism) so the Task-4 owners can be typed and round-trip the
-// Task 2 fixtures. These are finalized/owned by Task 5 — no semantics here.
+// S4 / S5 / S12 domain types (Task 5). The Task 4 provisional seams
+// (SupportMapping, VerificationMechanism) are promoted in place here; EvidenceRef
+// and ExecutionResult are added. Data types only — no VR logic, no execution or
+// evidence-collection behavior (that is RUNTIME via `interfaces`, Task 9/10/11).
 // ---------------------------------------------------------------------------
 
-/// EvidenceRef + SupportMapping (S4). Provisional seam types only (Task 4);
-/// finalized in Task 5.
+/// EvidenceRef + SupportMapping (S4). Final (Task 5).
 pub mod evidence;
 
-/// ExecutionResult + VerificationMechanism (S5 / S12). Provisional seam types
-/// only (Task 4); finalized in Task 5.
+/// ExecutionResult + VerificationMechanism (S5 / S12). Final (Task 5).
 pub mod execution;
 
 /// Abstract capability interfaces: RepositoryReader, CommandExecutor,
-/// EvidenceCollector, AuditContextProvider. Implemented in Task 5 / 9.
-///
-/// CORE calls only these four interfaces; it never touches host FS or processes
-/// directly. Project-tree capabilities are limited to `{READ, EXECUTE_EXISTING}`
-/// (CAP-1); report persistence is a separate axis targeting the external audit
-/// workspace (WS-1) and must never introduce a project `WRITE` capability.
-pub mod interfaces {}
+/// EvidenceCollector, AuditContextProvider (frozen contract §17). Task 5
+/// declares the **abstract trait shapes**; CORE calls only these four interfaces
+/// and never touches host FS or processes directly. Project-tree capabilities
+/// are limited to `{READ, EXECUTE_EXISTING}` (CAP-1); report persistence is a
+/// separate axis targeting the external audit workspace (WS-1) and must never
+/// introduce a project `WRITE` capability. The trait **implementations**
+/// (enforcement, process execution, discovery, persistence) are RUNTIME/adapter
+/// concerns — Task 9/10/11 — not CORE.
+pub mod interfaces;
 
 /// Validation-rule (VR) enforcement — the non-structural portion of VR1–VR13.
 ///
