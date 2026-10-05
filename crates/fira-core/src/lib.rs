@@ -94,6 +94,17 @@ pub mod interfaces;
 /// `ValidationContext`; no host FS/process/network access (Layer ownership).
 pub mod validation;
 
+/// Confidence rubric (frozen contract §8; CONF-1/CONF-2; E1/E5). Task 6.
+///
+/// A pure, deterministic CORE function that derives a finding's confidence
+/// outcome from the structured evidence model (never from the recorded
+/// `confidence`, CONF-1), plus the VR5 recompute-and-compare hook. Only the
+/// contract-fixed, deterministic portion is implemented; the qualitative
+/// MEDIUM/LOW distinction is intentionally not mechanized (no structured signal
+/// for it). No rubric parameters are introduced (those are POLICY). No host
+/// FS/process/network. The verdict engine (VR7) is Task 7.
+pub mod confidence;
+
 #[cfg(test)]
 mod contract_version_test {
     use super::CONTRACT_VERSION;
