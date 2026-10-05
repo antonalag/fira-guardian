@@ -57,6 +57,14 @@ pub enum Vr {
     /// VR2 — concurrency/durability/recovery finding ⇒ `failure_scenario.anchor`
     /// non-null.
     Vr2,
+    /// VR5 — recompute confidence and compare. This is the label for the
+    /// recompute-and-compare rule whose **deterministic** portion is implemented
+    /// by the Task 6 confidence rubric (see [`crate::confidence`]). It is **not**
+    /// run by [`run_vrs`]; the rubric is invoked via
+    /// [`RecomputeHook::recompute_confidence`]. The variant exists only so a VR5
+    /// deviation can be labeled — it adds no new rule (VR5 is already in
+    /// `schema-formalization.md`).
+    Vr5,
     /// VR8 — every gate appears in ≥1 coverage entry.
     Vr8,
     /// VR9 — no "correct/safe" adjudication language in rationale/summary.
@@ -79,6 +87,7 @@ impl Vr {
         match self {
             Vr::Vr1 => "VR1",
             Vr::Vr2 => "VR2",
+            Vr::Vr5 => "VR5",
             Vr::Vr8 => "VR8",
             Vr::Vr9 => "VR9",
             Vr::Vr11 => "VR11",
