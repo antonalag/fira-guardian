@@ -65,6 +65,14 @@ pub enum Vr {
     /// deviation can be labeled — it adds no new rule (VR5 is already in
     /// `schema-formalization.md`).
     Vr5,
+    /// VR7 — recompute `technical_assessment` and compare. This is the label for
+    /// the recompute-and-compare rule whose **deterministic** portion is
+    /// implemented by the Task 7 verdict engine (see [`crate::verdict`]). It is
+    /// **not** run by [`run_vrs`]; the engine is invoked via
+    /// [`RecomputeHook::recompute_verdict`]. The variant exists only so a VR7
+    /// deviation can be labeled — it adds no new rule (VR7 is already in
+    /// `schema-formalization.md`).
+    Vr7,
     /// VR8 — every gate appears in ≥1 coverage entry.
     Vr8,
     /// VR9 — no "correct/safe" adjudication language in rationale/summary.
@@ -88,6 +96,7 @@ impl Vr {
             Vr::Vr1 => "VR1",
             Vr::Vr2 => "VR2",
             Vr::Vr5 => "VR5",
+            Vr::Vr7 => "VR7",
             Vr::Vr8 => "VR8",
             Vr::Vr9 => "VR9",
             Vr::Vr11 => "VR11",
