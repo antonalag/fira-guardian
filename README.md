@@ -29,6 +29,7 @@ all lower layers; `cli` → `adapters`.
 - Frozen contract: [`docs/contract/frozen-mvp-contract.md`](docs/contract/frozen-mvp-contract.md)
 - Schema formalization (S1–S12, VR1–VR13): [`docs/contract/schema-formalization.md`](docs/contract/schema-formalization.md)
 - Language decision: [`docs/adr/ADR-001-implementation-language.md`](docs/adr/ADR-001-implementation-language.md)
+- Invariant enforcement strategy: [`docs/adr/ADR-002-invariant-enforcement-strategy.md`](docs/adr/ADR-002-invariant-enforcement-strategy.md)
 - Contract version marker: [`CONTRACT_VERSION`](CONTRACT_VERSION)
 
 ## Security boundary (why it matters)

@@ -1,17 +1,12 @@
-//! S6 Claim / Requirement / Invariant family.
-//!
-//! Verbatim translation of `schema-formalization.md` §S6: `DeclaredClaim`,
-//! `InferredInvariant`, `ReleaseRequirement`, `SecurityProperty`. Task 4 types
-//! the data only; it adds no business meaning (C3: no invented requirements) and
-//! no validation beyond what the frozen schema fixes.
+//! S6 Claim / Requirement / Invariant family: `DeclaredClaim`,
+//! `InferredInvariant`, `ReleaseRequirement`, `SecurityProperty`.
 
 use serde::{Deserialize, Serialize};
 
 use crate::model::{AlwaysTrue, GateName, IdRef, ProfileId, SecurityPropertySource};
 
-/// DeclaredClaim (S6): a project-asserted claim (UntrustedClaims). Carries zero
-/// evidentiary weight until independently verified (TRUST-1) — a runtime concern,
-/// not a type-level one.
+/// DeclaredClaim (S6): a project-asserted claim. Carries zero evidentiary weight
+/// until independently verified (TRUST-1), which is a runtime concern.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeclaredClaim {

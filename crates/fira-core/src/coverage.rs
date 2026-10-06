@@ -1,8 +1,7 @@
 //! S9 CoverageStatement.
 //!
-//! Verbatim translation of `schema-formalization.md` §S9. The VR8 (every gate in
-//! ≥1 coverage entry) and VR9 (no correct/safe language) rules are enforced in
-//! the Task 2 validator, not at the type level. Task 4 types the data only.
+//! VR8 (every gate in ≥1 coverage entry) and VR9 (no correct/safe language) are
+//! enforced in the validator, not at the type level.
 
 use serde::{Deserialize, Serialize};
 

@@ -1,8 +1,7 @@
-//! S1 AuditRequest.
+//! S1 AuditRequest: the invocation input.
 //!
-//! Verbatim translation of `schema-formalization.md` §S1 (the invocation input,
-//! frozen contract §18). Trust handling (TrustedInputs vs UntrustedClaims) is a
-//! runtime concern (§15), not a type-level one. Task 4 types the data only.
+//! Trust handling (TrustedInputs vs UntrustedClaims) is a runtime concern, not a
+//! type-level one.
 
 use serde::{Deserialize, Serialize};
 

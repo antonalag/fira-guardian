@@ -1,20 +1,10 @@
-//! Confidence rubric (frozen contract §8; CONF-1/CONF-2; E1/E5) — Task 6.
+//! Confidence rubric (§8; CONF-1/CONF-2; E1/E5).
 //!
-//! Public surface:
-//! - [`ConfidenceOutcome`] and [`recompute_confidence_outcome`] — the pure,
-//!   deterministic rubric over the typed [`Finding`](crate::finding::Finding)
-//!   model.
-//! - [`recorded_contradicts`] — the deterministic VR5 compare step.
-//! - [`ConfidenceRubric`] — a [`RecomputeHook`](crate::validation::RecomputeHook)
-//!   implementor that performs VR5 recompute-and-compare over a report value.
-//!
-//! Scope (approved Option A, Task 6):
-//! - Implements only the contract-fixed deterministic portion of §8/VR5.
-//! - Does **not** mechanize the MEDIUM/LOW distinction (no structured signal).
-//! - Introduces **no** rubric parameters (those are POLICY).
-//! - Keeps the Task 2 `RecomputeHook` boundary: `run_vrs` is **not** modified to
-//!   call the rubric; VR5 is invoked explicitly via the hook.
-//! - Pure CORE computation: no filesystem, process, or network.
+//! [`recompute_confidence_outcome`] / [`recorded_contradicts`] are the pure
+//! rubric and its VR5 compare step; [`ConfidenceRubric`] wires them into a
+//! [`RecomputeHook`](crate::validation::RecomputeHook). No rubric parameters are
+//! introduced here (those are POLICY), and the `run_vrs` boundary is preserved:
+//! VR5 runs only through the hook.
 
 mod rubric;
 
@@ -27,12 +17,9 @@ use crate::validation::{RecomputeHook, Violation, Vr};
 
 /// VR5 recompute-and-compare over a canonical `AuditReport` value.
 ///
-/// Zero-sized and pure. Implements [`RecomputeHook::recompute_confidence`]: for
-/// each published finding it recomputes the confidence outcome from the evidence
-/// model and emits a [`Vr::Vr5`] [`Violation`] when the recorded `confidence`
-/// deterministically contradicts the recomputed outcome (see
-/// [`recorded_contradicts`]). `recompute_verdict` keeps the default no-op — the
-/// verdict engine (VR7) is Task 7.
+/// For each finding it recomputes the confidence outcome and emits a
+/// [`Vr::Vr5`] [`Violation`] when the recorded `confidence` contradicts it (see
+/// [`recorded_contradicts`]). `recompute_verdict` keeps the default no-op.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConfidenceRubric;
 
@@ -46,10 +33,8 @@ impl RecomputeHook for ConfidenceRubric {
         };
 
         for (i, finding_value) in findings.iter().enumerate() {
-            // Deserialize into the typed model so the rubric is typed and the
-            // compare is exact. A finding that does not deserialize is a schema
-            // concern (handled by the Task 2 schema layer), not a VR5 concern;
-            // skip it here rather than inventing a confidence verdict for it.
+            // A finding that does not deserialize is a schema concern, not a VR5
+            // one; skip it rather than inventing a confidence verdict for it.
             let finding: Finding = match serde_json::from_value(finding_value.clone()) {
                 Ok(f) => f,
                 Err(_) => continue,

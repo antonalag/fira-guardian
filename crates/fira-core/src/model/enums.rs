@@ -1,13 +1,9 @@
 //! Shared closed enums for the CORE domain model.
 //!
-//! Rust analogue of the enum `$defs` in `schemas/_defs/common.schema.json`. Each
-//! enum's wire form (via `serde` rename) equals the schema enum string
-//! **verbatim** — no new value is introduced. These enums are frozen for the MVP
-//! (S1–S12 under `schema-formalization.md`), so they are intentionally **not**
-//! `#[non_exhaustive]`: an exhaustive `match` over the frozen variant set is a
-//! deliberate property (ADR-001: illegal states unrepresentable).
-//!
-//! Task 4 scope: data only. No rule, rubric, or verdict logic lives here.
+//! Each enum's wire form (via `serde` rename) equals the schema enum string
+//! verbatim. The enums are intentionally **not** `#[non_exhaustive]`: an
+//! exhaustive `match` over the frozen variant set is a deliberate property
+//! (illegal states unrepresentable — see `docs/adr/ADR-001`).
 
 use serde::{Deserialize, Serialize};
 
@@ -89,8 +85,7 @@ pub enum Severity {
     Info,
 }
 
-/// Derived confidence (S7; CONF-1). LOW != INSUFFICIENT (CONF-2). The value is
-/// plain data here; its derivation (the rubric) is Task 6, not Task 4.
+/// Derived confidence (S7; CONF-1). LOW != INSUFFICIENT (CONF-2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Confidence {
     #[serde(rename = "HIGH")]
@@ -184,7 +179,7 @@ pub enum CoverageResult {
     IssuesFound,
 }
 
-/// Evidence reference type (S4). Used by the Task-5 seam type `EvidenceRef`.
+/// Evidence reference type (S4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EvidenceType {
     #[serde(rename = "CODE")]
@@ -283,8 +278,8 @@ pub enum HumanDecisionState {
 }
 
 /// FIRA-produced HumanDecision state (VR6): restricted to {NOT_APPLICABLE,
-/// PENDING}. This mirrors the Task 2 schema's `HumanDecisionFira` split; it adds
-/// no new rule — it reflects the already-approved structural restriction.
+/// PENDING}. The restriction makes a FIRA-emitted ACCEPTED/REJECTED
+/// unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HumanDecisionFiraState {
     #[serde(rename = "NOT_APPLICABLE")]
@@ -323,8 +318,8 @@ pub enum GateName {
     OperationalReadiness,
 }
 
-/// The 5 built-in profile ids (frozen contract §20, S2). The profile *data*
-/// (S2 instances) is Task 8; this id enum is shared because S1/S11 reference it.
+/// The 5 built-in profile ids (§20, S2). The id enum lives in CORE (S1/S11
+/// reference it); the profile *data* (S2 instances) is POLICY.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ProfileId {
     #[serde(rename = "library")]

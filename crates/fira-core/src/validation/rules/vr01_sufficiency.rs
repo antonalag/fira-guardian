@@ -1,17 +1,8 @@
-//! VR1 — support-mapping sufficiency.
+//! VR1 — support-mapping sufficiency (the semantic part; the nonempty `minItems`
+//! part is structural).
 //!
-//! From `schema-formalization.md`: every finding `support_mappings` nonempty;
-//! any PASS/VERIFIED has ≥1 SUFFICIENT mapping. The nonempty part (`minItems:1`)
-//! is structural (JSON Schema); this module enforces the semantic part:
-//!
-//! - Every published FINDING (S7, maturity FINDING/RISK) carries ≥1 SUFFICIENT
-//!   SupportMapping (CONF-2: LOW ≠ INSUFFICIENT; a published finding is backed by
-//!   sufficient evidence).
-//! - Every gate in state PASS carries ≥1 SUFFICIENT SupportMapping.
-//! - Every finding whose EpistemicState conclusion is VERIFIED carries ≥1
-//!   SUFFICIENT SupportMapping.
-//!
-//! This is a mechanical reading of VR1/CONF-2; it adds no new semantics.
+//! Requires ≥1 SUFFICIENT SupportMapping for: every published finding (CONF-2:
+//! LOW ≠ INSUFFICIENT), every gate in state PASS, and every VERIFIED finding.
 
 use serde_json::Value;
 

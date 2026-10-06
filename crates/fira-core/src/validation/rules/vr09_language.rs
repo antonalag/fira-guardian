@@ -1,14 +1,9 @@
-//! VR9 — no "correct/safe" adjudication language.
+//! VR9 — no "correct/safe" adjudication language in rationale/summary.
 //!
-//! From `schema-formalization.md` / frozen contract §13: no "correct/safe"
-//! language anywhere in rationale/summary. FIRA reports evidence, not verdicts of
-//! correctness or safety. This is a lexical scan over the adjudication-bearing
-//! text fields, using a **fixed, documented** token list. It invents no new
-//! prohibited terms beyond the contract's "correct/safe".
-//!
-//! Tokens are matched as whole words, case-insensitively, so "correctness" (a
-//! neutral gate/category name) and "unsafe" are not falsely flagged — only the
-//! adjudication adjectives "correct" and "safe" themselves.
+//! A lexical scan over the adjudication-bearing text fields. Tokens are matched
+//! as whole words, case-insensitively, so "correctness" (a neutral gate name)
+//! and "unsafe" are not falsely flagged — only the adjectives "correct" and
+//! "safe" themselves.
 
 use serde_json::Value;
 

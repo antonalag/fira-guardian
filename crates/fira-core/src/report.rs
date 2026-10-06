@@ -1,13 +1,8 @@
 //! S11 AuditReport (canonical machine report).
 //!
-//! Verbatim translation of `schema-formalization.md` §S11. Task 4 types the data;
-//! it does not compute anything. `determinism_inputs_hash` is a plain data field
-//! (part of the VR7 verdict surface, computed by Task 7). `human_decision` uses
-//! the FIRA-produced [`HumanDecisionFira`] variant (VR6).
-//!
-//! `applied_profile` is an **S11-local** sub-object (the applied profile snapshot
-//! recorded in the report), distinct from the full S2 `AuditProfile` type, which
-//! is Task 8. Task 4 types only this S11-local shape; it does not pull S2 forward.
+//! `applied_profile` is an S11-local snapshot shape, deliberately distinct from
+//! the full S2 `AuditProfile` type (POLICY): the report records the profile as
+//! applied, not the profile definition.
 
 use serde::{Deserialize, Serialize};
 
@@ -47,8 +42,8 @@ pub enum NaOverrideBy {
     Human,
 }
 
-/// The applied-profile snapshot recorded in S11 AuditReport. S11-local (NOT the
-/// S2 `AuditProfile`, which is Task 8).
+/// The applied-profile snapshot recorded in S11 AuditReport. S11-local (not the
+/// S2 `AuditProfile`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppliedProfile {
@@ -80,7 +75,7 @@ pub struct AuditReport {
     pub request: AuditRequest,
     pub applied_profile: AppliedProfile,
     pub system_model_summary: String,
-    /// Discovered registry. `VerificationMechanism` is the provisional Task-5 seam.
+    /// Discovered registry.
     pub verification_mechanisms: Vec<VerificationMechanism>,
     pub divergence_records: Vec<DivergenceRecord>,
     pub findings: Vec<Finding>,
@@ -91,7 +86,6 @@ pub struct AuditReport {
     pub human_decision: HumanDecisionFira,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prior_report_ref: Option<String>,
-    /// Hash of structured state fed to the verdict engine. VR7 surface; the hash
-    /// is produced by Task 7, stored as plain data here.
+    /// Hash of the structured state fed to the verdict engine (VR7 surface).
     pub determinism_inputs_hash: String,
 }
