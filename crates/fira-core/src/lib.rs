@@ -105,6 +105,18 @@ pub mod validation;
 /// FS/process/network. The verdict engine (VR7) is Task 7.
 pub mod confidence;
 
+/// Deterministic verdict engine (frozen contract §11; C10). Task 7.
+///
+/// A pure, deterministic CORE function that computes the `TechnicalAssessment`
+/// (result + blocking/risk sets + the FIRA-set `HumanDecision`) from the
+/// structured gates + findings (never from the recorded assessment, C10), per
+/// §11 Steps 1–4, plus the VR7 recompute-and-compare hook. Gate states are
+/// consumed as recorded (§7 gate-state derivation is a separate concern);
+/// `minimum_evidence_expectations` are POLICY (Task 8) and are supplied via a
+/// caller input defaulting to empty. No host FS/process/network. The confidence
+/// rubric (VR5) is Task 6.
+pub mod verdict;
+
 #[cfg(test)]
 mod contract_version_test {
     use super::CONTRACT_VERSION;
