@@ -1,19 +1,10 @@
-//! VR12 — command_id foreign-key resolution. *(correction 3)*
+//! VR12 — `command_id` foreign-key resolution (EXEC-1).
 //!
-//! From `schema-formalization.md` / frozen contract §6 EXEC-1: every
-//! `ExecutionResult.command_id` and executed reference resolves to a
-//! VerificationMechanism with `declared_by_project=true`; synthesized commands
-//! are rejected.
-//!
-//! ## Mechanical check
-//!
-//! The set of legitimate ids is supplied by
-//! [`ValidationContext::known_mechanism_ids`](crate::validation::ValidationContext),
-//! which a caller derives from the report's `verification_mechanisms` where
-//! `declared_by_project=true` (see `StaticValidationContext::from_report`). Any
-//! executed reference in `coverage.executed_mechanisms[].command_id` that does
-//! not resolve to that set is a VR12 violation. This is a deterministic FK
-//! resolution with no new semantics.
+//! The legitimate ids come from
+//! [`ValidationContext::known_mechanism_ids`](crate::validation::ValidationContext)
+//! (the `declared_by_project=true` mechanisms). Any executed reference in
+//! `coverage.executed_mechanisms[].command_id` that does not resolve to that set
+//! is a violation — a synthesized command.
 
 use serde_json::Value;
 

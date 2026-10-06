@@ -1,20 +1,9 @@
-//! VR13 — no report/persistence path under `project_root`. *(correction 4)*
+//! VR13 — no report/persistence path under `project_root` (WS-1/P-1).
 //!
-//! From `schema-formalization.md` / frozen contract §19 WS-1/P-1: no report path
-//! or runtime write target lies inside `project_root`; persistence targets the
-//! external audit workspace only.
-//!
-//! ## Mechanical check (pure path containment)
-//!
-//! This is a pure predicate over strings: any persistence/report path in the
-//! report that normalizes to a location under `ctx.project_root()` is a VR13
-//! violation. CORE does **not** touch a real filesystem — the caller supplies
-//! the `project_root` string via
-//! [`ValidationContext`](crate::validation::ValidationContext), and no actual
-//! write happens in Task 2. The report-side path candidate that exists in the
-//! canonical `AuditReport` (S11) is `prior_report_ref`; the report has no other
-//! persistence-target field in the frozen model, so only declared path fields
-//! are checked (no new field is introduced).
+//! A pure predicate over strings: a path that normalizes to a location under
+//! `ctx.project_root()` is a violation. CORE touches no filesystem — the caller
+//! supplies the `project_root` string. `prior_report_ref` is the only
+//! persistence-target path in the S11 report, so it is the only field checked.
 
 use serde_json::Value;
 

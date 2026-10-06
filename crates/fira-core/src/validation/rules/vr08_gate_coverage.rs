@@ -1,12 +1,9 @@
 //! VR8 — every gate appears in ≥1 coverage entry.
 //!
-//! From `schema-formalization.md` / frozen contract §13: "Every gate maps to ≥1
-//! coverage entry." The coverage model (S9) describes areas by a free-text
-//! `area` field. The minimal, non-inventive reading — adding no new field and no
-//! new semantics — is that a gate "appears in a coverage entry" when its gate
-//! `name` occurs as the `area` of at least one audited / skipped / blocked
-//! coverage entry. A gate present in `report.gates` with no such coverage entry
-//! is a VR8 violation.
+//! Coverage entries name areas by a free-text `area` field. A gate is treated as
+//! "appearing" when its `name` matches the `area` of some audited/skipped/blocked
+//! entry; a gate with no such entry is a violation. This reading adds no field to
+//! the coverage model.
 
 use serde_json::Value;
 

@@ -1,20 +1,10 @@
-//! Abstract capability interfaces — **FINAL shapes (Task 5); behavior is RUNTIME**.
+//! Abstract capability interfaces (§17): the four traits CORE calls. Signatures
+//! only — the implementations (enforcement, process execution, discovery,
+//! persistence) are RUNTIME/adapter concerns.
 //!
-//! Frozen contract §1 / §17: CORE owns the *abstract* capability interfaces;
-//! RUNTIME owns capability enforcement (`{READ, EXECUTE_EXISTING}`), the
-//! VerificationMechanism registry, production of `ExecutionResult`, and
-//! external-workspace persistence (WS-1). Accordingly, this module declares the
-//! four traits CORE calls — **signatures only**. It ships **no** implementation,
-//! and **no** method here performs filesystem, process, network, persistence,
-//! mechanism-discovery, or host-binding behavior. Those arrive in Task 9/10/11
-//! (`fira-runtime` / adapters).
-//!
-//! The traits are object-safe (all methods take `&self` and use sized
-//! parameters/returns), so CORE can hold them as `dyn` capability handles —
-//! "Core calls only these four interfaces" (§17).
-//!
-//! Capability gaps become **coverage limitations, not crashes** (§17): fallible
-//! operations return [`Result<_, CapabilityError>`] rather than panicking.
+//! The traits are object-safe so CORE can hold them as `dyn` capability handles.
+//! Fallible operations return [`Result<_, CapabilityError>`] rather than
+//! panicking, so a capability gap becomes a coverage limitation, not a crash.
 
 use std::collections::BTreeSet;
 
@@ -64,11 +54,9 @@ pub struct LineRange {
     pub end: u32,
 }
 
-/// The location where a report was persisted, as returned by
-/// [`AuditContextProvider::persist_report`]. A CORE-pure data type representing
-/// the *result/location concept only*: CORE neither writes nor validates it.
-/// Actual persistence and WS-1 path enforcement (external audit workspace;
-/// never under `project_root`) live outside CORE (Task 9/10/11).
+/// The location where a report was persisted (returned by
+/// [`AuditContextProvider::persist_report`]). A result-location value only; CORE
+/// neither writes nor validates it, and WS-1 path enforcement lives in RUNTIME.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistLocation(pub String);
 
@@ -102,10 +90,10 @@ pub trait CommandExecutor {
 
 /// Captures execution output as evidence and attaches support mappings. §17.
 ///
-/// The §17 `attach(finding|gate, support_mapping)` operation is represented as
-/// two methods — [`attach_to_finding`](EvidenceCollector::attach_to_finding) and
-/// [`attach_to_gate`](EvidenceCollector::attach_to_gate) — a Rust representation
-/// choice that does not change the underlying contract semantics.
+/// The §17 `attach(finding|gate, support_mapping)` operation is split into two
+/// methods ([`attach_to_finding`](EvidenceCollector::attach_to_finding) /
+/// [`attach_to_gate`](EvidenceCollector::attach_to_gate)); the split is a
+/// representation choice and does not change contract semantics.
 pub trait EvidenceCollector {
     /// Capture an execution result as an evidence reference.
     fn capture(&self, execution_result: &ExecutionResult) -> Result<EvidenceRef, CapabilityError>;

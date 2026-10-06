@@ -1,13 +1,12 @@
-//! The pure, deterministic verdict engine (frozen contract §11; C10).
+//! The pure, deterministic verdict engine (§11; C10).
 //!
 //! `compute_assessment` implements §11 Steps 1–4 as a pure function of the
-//! structured gates + findings. It never reads the report's recorded
-//! `technical_assessment` (C10: the verdict is recomputed, not trusted). Gate
-//! states are consumed as recorded (`Gate.state`); §7 gate-state derivation
-//! (Step0) is a separate concern and is not re-derived here (Task 7 §9.2(A)).
-//! `minimum_evidence_expectations` are POLICY (Task 8); until they exist, the
-//! caller supplies [`ExpectationViolations`] (default empty), so required
-//! PARTIAL resolves to RISK — exactly §11's `else` branch (§9.1(A)).
+//! structured gates + findings, never reading the recorded
+//! `technical_assessment` (C10). Gate states are consumed as recorded; §7
+//! gate-state derivation (Step0) is a separate concern not re-derived here.
+//! `minimum_evidence_expectations` are POLICY, supplied by the caller via
+//! [`ExpectationViolations`]; with the default empty set, required PARTIAL
+//! resolves to RISK (§11 `else`).
 
 use crate::finding::Finding;
 use crate::gate::Gate;
@@ -16,10 +15,9 @@ use crate::model::{
     ReleaseImpact, RequirementLevel, Severity, TechnicalAssessmentResult,
 };
 
-/// Required gates known to violate a `minimum_evidence_expectation`. Supplied by
-/// the caller; **not** POLICY data authored here. Default empty ⇒ no required
-/// PARTIAL is forced to block (it becomes RISK, §11 `else`). When Task 8 POLICY
-/// exists, a caller may populate this; Task 7 ships no expectations.
+/// Required gates known to violate a `minimum_evidence_expectation`. Caller-
+/// supplied, not POLICY data authored here. Default empty ⇒ no required PARTIAL
+/// is forced to block (it becomes RISK, §11 `else`).
 #[derive(Debug, Clone, Default)]
 pub struct ExpectationViolations {
     gates: Vec<GateName>,
@@ -41,15 +39,15 @@ impl ExpectationViolations {
     }
 }
 
-/// The recomputed assessment: the §11 result and the deterministic blocking/risk
-/// sets, plus the FIRA-set human decision for the branches §11 fixes.
+/// The recomputed assessment: the §11 result, the deterministic blocking/risk
+/// sets, and the FIRA-set human decision for the branches §11 fixes.
 ///
 /// `human_decision` is `Some(..)` only where §11 Step3 fixes it: READY ⇒
-/// `NOT_APPLICABLE`, READY_WITH_RISKS ⇒ `PENDING`. For `NOT_READY` the frozen
-/// contract does not fix a FIRA HumanDecision (Step3 specifies it only for the
-/// READY / READY_WITH_RISKS branches; §10 composes `NOT_READY + any → NOT_READY`),
-/// so it is left `None` rather than inventing a value. FIRA only ever produces
-/// `NOT_APPLICABLE | PENDING` (VR6) — never ACCEPTED/REJECTED.
+/// `NOT_APPLICABLE`, READY_WITH_RISKS ⇒ `PENDING`. For `NOT_READY` the contract
+/// fixes no FIRA HumanDecision (Step3 specifies it only for the READY /
+/// READY_WITH_RISKS branches; §10 composes `NOT_READY + any → NOT_READY`), so it
+/// stays `None` rather than inventing a value. FIRA only ever produces
+/// `NOT_APPLICABLE | PENDING` (VR6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecomputedAssessment {
     pub result: TechnicalAssessmentResult,
@@ -61,10 +59,9 @@ pub struct RecomputedAssessment {
 }
 
 /// Whether a finding participates in the verdict given its lifecycle (§11 Step4,
-/// §14): `VERIFIED_FIXED` is excluded; `REOPENED` is evaluated as `OPEN`;
-/// `WONT_FIX` is retained (keeps its severity, still enters blocking/risks);
-/// `OPEN` and `FIX_CLAIMED` participate (FIX_CLAIMED is verdict-equivalent to
-/// OPEN until independently verified as fixed — §14).
+/// §14): only `VERIFIED_FIXED` is excluded. `REOPENED` is evaluated as `OPEN`,
+/// `WONT_FIX` is retained with its severity, and `FIX_CLAIMED` is
+/// verdict-equivalent to `OPEN` until independently verified.
 fn finding_participates(finding: &Finding) -> bool {
     !matches!(finding.lifecycle_status, LifecycleStatus::VerifiedFixed)
 }
@@ -105,15 +102,15 @@ pub fn compute_assessment(
     let mut risk_findings: Vec<FindingId> = Vec::new();
     let mut risk_gates: Vec<GateName> = Vec::new();
 
-    // --- Findings (Step1 B1/B2, Step2 release_impact=RISK), after Step4 filter.
-    // Step4: multiple MEDIUMs never aggregate by count — each finding is judged
-    // on its own, so there is no counting anywhere below.
+    // Findings: Step1 B1/B2, Step2 release_impact=RISK, after the Step4 filter.
+    // Each finding is judged on its own — multiple MEDIUMs never aggregate (§11
+    // Step4), so there is no counting below.
     for finding in findings.iter().filter(|f| finding_participates(f)) {
         let is_blocker = finding.release_impact == ReleaseImpact::Blocker;
 
         // B1: CRITICAL + {HIGH,MEDIUM} + BLOCKER ⇒ block. CRITICAL+LOW does not
         // auto-block (its "forbids PASS on its gates" clause is a §7 gate-state
-        // concern, out of scope under §9.2(A)).
+        // concern handled elsewhere).
         let b1 = finding.severity == Severity::Critical
             && matches!(finding.confidence, Confidence::High | Confidence::Medium)
             && is_blocker;

@@ -1,15 +1,10 @@
 //! S10 TechnicalAssessment + HumanDecision.
 //!
-//! Verbatim translation of `schema-formalization.md` §S10. Task 4 types the data;
-//! it does **not** compute the verdict — `computed_by_rule` is a plain data field
-//! whose producer (the verdict engine, VR7) is Task 7. No gate normalization, no
-//! blocking/risk computation here.
-//!
-//! VR6 reflection: FIRA sets only {NOT_APPLICABLE, PENDING}. This is mirrored by
-//! two types — [`HumanDecision`] (full external enum) and [`HumanDecisionFira`]
-//! (restricted) — matching the Task 2 schema's `HumanDecision` /
-//! `HumanDecisionFira` split. The canonical report (S11) uses the FIRA-produced
-//! variant.
+//! HumanDecision is split into two types so VR6 is unrepresentable to violate:
+//! [`HumanDecision`] carries the full external enum, while [`HumanDecisionFira`]
+//! is restricted to the {NOT_APPLICABLE, PENDING} values FIRA may set. The
+//! canonical report (S11) uses the FIRA-produced variant. The verdict engine
+//! that computes the assessment lives in `crate::verdict`.
 
 use serde::{Deserialize, Serialize};
 
@@ -18,8 +13,7 @@ use crate::model::{
 };
 
 /// TechnicalAssessment (S10): FIRA-owned readiness result plus the blocking/risk
-/// sets. `computed_by_rule` names the verdict rule that produced it — Task 4
-/// stores it as data; the verdict engine is Task 7.
+/// sets. `computed_by_rule` names the verdict rule that produced it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TechnicalAssessment {

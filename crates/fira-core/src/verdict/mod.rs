@@ -1,22 +1,11 @@
-//! Deterministic verdict engine (frozen contract §11; C10) — Task 7.
+//! Deterministic verdict engine (§11; C10).
 //!
-//! Public surface:
-//! - [`RecomputedAssessment`], [`ExpectationViolations`], and
-//!   [`compute_assessment`] — the pure, deterministic §11 Steps 1–4 over the
-//!   typed [`Gate`](crate::gate::Gate) / [`Finding`](crate::finding::Finding)
-//!   model.
-//! - [`VerdictEngine`] — a [`RecomputeHook`](crate::validation::RecomputeHook)
-//!   implementor performing VR7 recompute-and-compare over a report value.
-//!
-//! Scope (approved Option A, Task 7):
-//! - Pure, deterministic, in CORE; never reads the recorded assessment (C10).
-//! - Consumes recorded `Gate.state`; does not re-derive gate states (§7/Step0).
-//! - `minimum_evidence_expectations` are POLICY (Task 8); supplied via
-//!   [`ExpectationViolations`] (default empty ⇒ required PARTIAL = RISK).
-//! - VR7 compares the result **and** the blocking/risk sets, order-insensitively.
-//! - `determinism_inputs_hash` is not computed/verified (no fixed algorithm).
-//! - Keeps the Task 2 `RecomputeHook` boundary: `run_vrs` is **not** modified.
-//! - No host FS/process/network.
+//! [`compute_assessment`] (with [`RecomputedAssessment`] /
+//! [`ExpectationViolations`]) is the pure §11 Steps 1–4; [`VerdictEngine`] wires
+//! it into a [`RecomputeHook`](crate::validation::RecomputeHook) for VR7. VR7
+//! compares the result **and** the blocking/risk sets order-insensitively. The
+//! `run_vrs` boundary is preserved: VR7 runs only through the hook.
+//! `determinism_inputs_hash` is not computed here (no fixed algorithm yet).
 
 mod engine;
 
@@ -30,12 +19,10 @@ use crate::validation::{RecomputeHook, Violation, Vr};
 
 /// VR7 recompute-and-compare over a canonical `AuditReport` value.
 ///
-/// Zero-sized and pure. Implements [`RecomputeHook::recompute_verdict`]: it
-/// recomputes the assessment from the report's gates + findings (never reading
+/// Recomputes the assessment from the report's gates + findings (never reading
 /// the recorded `technical_assessment`, C10) and emits a [`Vr::Vr7`]
-/// [`Violation`] when the recorded `technical_assessment.result` or any of its
-/// blocking/risk sets deviate from the recompute. `recompute_confidence` keeps
-/// the default no-op — the confidence rubric (VR5) is Task 6.
+/// [`Violation`] when the recorded result or any blocking/risk set deviates.
+/// `recompute_confidence` keeps the default no-op.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VerdictEngine;
 
@@ -50,9 +37,8 @@ impl RecomputeHook for VerdictEngine {
     fn recompute_verdict(&self, report: &Value) -> Vec<Violation> {
         let mut violations = Vec::new();
 
-        // Deserialize the typed inputs. If gates/findings or the recorded
-        // assessment are not present/parseable, that is a schema-layer concern
-        // (Task 2), not VR7; do not fabricate a verdict in that case.
+        // Missing/unparseable gates, findings, or recorded assessment is a
+        // schema-layer concern, not VR7; do not fabricate a verdict in that case.
         let gates: Vec<Gate> = match report.get("gates").cloned().map(serde_json::from_value) {
             Some(Ok(g)) => g,
             _ => return violations,
@@ -68,9 +54,8 @@ impl RecomputeHook for VerdictEngine {
             None => return violations,
         };
 
-        // Recompute with the default (empty) expectation violations: with no
-        // POLICY minimum_evidence_expectations yet, required PARTIAL ⇒ RISK
-        // (§11 else; Task 7 §9.1(A)).
+        // With no POLICY minimum_evidence_expectations yet, use the empty set:
+        // required PARTIAL ⇒ RISK (§11 else).
         let recomputed = compute_assessment(&gates, &findings, &ExpectationViolations::none());
 
         // Compare `result`.

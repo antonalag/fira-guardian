@@ -1,22 +1,10 @@
-//! VR11 — VERIFIED requires an execution-based facet. *(correction 1)*
+//! VR11 — `conclusion=VERIFIED` requires an execution-based facet.
 //!
-//! From `schema-formalization.md` / frozen contract §3 E1: any
-//! `EpistemicState.conclusion=VERIFIED` references ≥1 execution-based facet
-//! (OBSERVED, or a TESTED whose test was actually executed with PASSED). Static-
-//! only VERIFIED is rejected (no path to VERIFIED from SPECIFIED / IMPLEMENTED /
-//! TESTED-not-executed).
-//!
-//! ## Mechanical check in Task 2
-//!
-//! The facet set is the mechanically available signal. OBSERVED denotes
-//! execution + observation, so it is unambiguously execution-based. TESTED is
-//! only execution-based when the test was actually executed and PASSED — a fact
-//! that lives in an `ExecutionResult` link, not in the facet itself; that
-//! linking is deferred to later tasks. Task 2 therefore enforces the
-//! deterministic, non-static portion: an EpistemicState with
-//! `conclusion=VERIFIED` must include the OBSERVED facet. This rejects the
-//! static-only VERIFIED case (correction 1) without inventing the TESTED-
-//! execution linkage that a later task will supply.
+//! Only OBSERVED is decidable from the facet set alone, so this check requires a
+//! VERIFIED epistemic state to include OBSERVED. "Executed-PASSED TESTED" is also
+//! execution-based per the contract, but that fact lives in an `ExecutionResult`
+//! link not present in the facet set, so it is not mechanized here. Requiring
+//! OBSERVED still rejects the static-only VERIFIED case.
 
 use serde_json::Value;
 

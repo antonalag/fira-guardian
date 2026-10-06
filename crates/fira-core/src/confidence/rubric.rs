@@ -1,14 +1,10 @@
-//! The pure, deterministic confidence rubric (frozen contract §8; CONF-1/
-//! CONF-2; E1/E5).
+//! The pure, deterministic confidence rubric (§8; CONF-1/CONF-2; E1/E5).
 //!
-//! `recompute_confidence_outcome` is a pure function of a [`Finding`]'s
-//! structured evidence model. It never reads the finding's recorded
-//! `confidence` (CONF-1: confidence is derived, not model-overridable). It
-//! implements only the **deterministic** portion of §8 that the structured model
-//! can decide; the qualitative MEDIUM vs LOW distinction is intentionally **not**
-//! mechanized (the model carries no "indirect"/"adjacent"/"ambiguity" signal —
-//! approved Option A, Task 6 §9.2), so publishable-but-not-HIGH is a single
-//! bucket here.
+//! `recompute_confidence_outcome` derives a finding's confidence from its
+//! structured evidence, never from the recorded `confidence` (CONF-1). Only the
+//! deterministically-decidable portion of §8 is mechanized: the qualitative
+//! MEDIUM-vs-LOW distinction is deliberately **not**, because the model carries
+//! no signal for it, so publishable-but-not-HIGH is a single bucket here.
 
 use crate::finding::Finding;
 use crate::model::{Confidence, Facet, GateName, Sufficiency};
@@ -23,10 +19,9 @@ pub enum ConfidenceOutcome {
     /// Meets the §8 HIGH bar: publishable, with a direct execution-based facet
     /// and — for failure-class properties — the failure case exercised (E5).
     High,
-    /// Publishable (≥1 SUFFICIENT) but does not meet the HIGH bar. Per Option A
-    /// (§9.2) the MEDIUM/LOW split is not mechanized; a recorded MEDIUM or LOW is
-    /// consistent with this outcome ("ambiguity resolves downward; never below
-    /// LOW into publishable").
+    /// Publishable (≥1 SUFFICIENT) but does not meet the HIGH bar. The MEDIUM/LOW
+    /// split is not mechanized, so a recorded MEDIUM or LOW is consistent with
+    /// this outcome (ambiguity resolves downward, never below LOW).
     PublishableNonHigh,
 }
 
@@ -67,9 +62,9 @@ fn has_sufficient_mapping(finding: &Finding) -> bool {
 
 /// True if the finding's epistemic state carries an execution-based facet.
 ///
-/// OBSERVED is the unambiguously execution-based facet from the facet set alone
-/// (consistent with the mechanical VR11 reading); "executed-PASSED TESTED" needs
-/// an ExecutionResult link that is not mechanized here (same deferral as VR11).
+/// Only OBSERVED is decidable from the facet set alone (matching VR11);
+/// "executed-PASSED TESTED" would need an ExecutionResult link that is not
+/// mechanized here.
 fn has_execution_based_facet(finding: &Finding) -> bool {
     finding.epistemic_state.facets.contains(&Facet::Observed)
 }
@@ -106,19 +101,15 @@ pub fn recompute_confidence_outcome(finding: &Finding) -> ConfidenceOutcome {
 }
 
 /// Whether a recorded [`Confidence`] contradicts the recomputed
-/// [`ConfidenceOutcome`] in a way the frozen contract makes **determinable**.
+/// [`ConfidenceOutcome`] in a determinable way (the VR5 compare step).
 ///
-/// This is the VR5 compare step. It validates every determinable aspect — it
-/// does **not** collapse into "HIGH or not HIGH":
-///
-/// - `NotPublishable` recorded as **any** confidence is a contradiction (a
-///   published finding with no SUFFICIENT mapping — CONF-2/VR1 overlap).
-/// - A recorded **HIGH** that does not meet the HIGH bar is a contradiction
-///   (overclaimed HIGH; includes the failure-class failure-case requirement).
-/// - A recorded **MEDIUM/LOW** against a recomputed `High` or `PublishableNonHigh`
-///   is **not** flagged: the MEDIUM/LOW distinction is not deterministically
-///   decidable (Option A §9.2/§9.3), and downward resolution (§8/CONF-1) keeps a
-///   lower recorded value defensible.
+/// This does not collapse into "HIGH or not HIGH":
+/// - `NotPublishable` recorded as any confidence is a contradiction (a published
+///   finding with no SUFFICIENT mapping).
+/// - A recorded HIGH that does not meet the HIGH bar is an overclaim.
+/// - A recorded MEDIUM/LOW is never flagged, since that split is not
+///   deterministically decidable and downward resolution keeps a lower value
+///   defensible.
 pub fn recorded_contradicts(recorded: Confidence, outcome: ConfidenceOutcome) -> bool {
     match outcome {
         // Not publishable: any recorded confidence level is a contradiction.

@@ -1,18 +1,12 @@
-//! VR2 — failure-scenario anchor for failure-class findings.
+//! VR2 — a concurrency/durability/recovery finding requires a non-null
+//! `failure_scenario.anchor`.
 //!
-//! From `schema-formalization.md`: a concurrency/durability/recovery finding ⇒
-//! `failure_scenario.anchor` non-null. The `failure_scenario` object shape
-//! (anchor/trigger/consequence, with anchor required *within* the object) is
-//! structural; whether a finding *is* a failure-class finding — and therefore
-//! must carry a `failure_scenario` at all — is the semantic coupling enforced
-//! here.
-//!
-//! A finding is treated as failure-class (mechanically, no new taxonomy) when
-//! its `category` contains "concurrency", "durability", or "recovery" (case-
-//! insensitive), or when `gates_affected` includes one of the corresponding
-//! gate names (Concurrency, PersistenceDurability, FailureRecovery — the frozen
-//! contract §20 gates that own those classes). For such a finding,
-//! `failure_scenario.anchor` must be present and non-empty.
+//! The anchor-within-the-object requirement is structural; what this rule adds
+//! is deciding whether a finding *is* failure-class: its `category` contains
+//! "concurrency"/"durability"/"recovery" (case-insensitive), or `gates_affected`
+//! includes Concurrency / PersistenceDurability / FailureRecovery. The same
+//! heuristic is mirrored in the confidence rubric so the classification stays
+//! consistent.
 
 use serde_json::Value;
 

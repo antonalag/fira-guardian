@@ -1,8 +1,7 @@
 //! S8 Gate.
 //!
-//! Verbatim translation of `schema-formalization.md` §S8. The VR4 (N/A ⟺
-//! not_applicable) and VR8 (gate ↔ coverage) rules are enforced in the Task 2
-//! schema/validator, not at the type level. Task 4 types the data only.
+//! VR4 (N/A ⟺ not_applicable) and VR8 (gate ↔ coverage) are enforced in the
+//! schema/validator, not at the type level.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +18,6 @@ pub struct Gate {
     pub rationale: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cause: Option<GateCause>,
-    /// `SupportMapping` is the provisional Task-5 seam type.
     pub support_mappings: Vec<SupportMapping>,
     pub supporting_findings: Vec<FindingId>,
 }

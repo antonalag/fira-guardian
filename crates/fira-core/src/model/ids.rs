@@ -1,11 +1,9 @@
 //! Shared identifier newtypes for the CORE domain model.
 //!
-//! Thin `#[serde(transparent)]` wrappers over `String` that give type-level
-//! distinction between kinds of references without changing the wire form. Task 4
-//! does **not** enforce format patterns (e.g. the RR-NNN form of a finding id) in
-//! the constructor: the JSON Schemas (Task 2) already own pattern enforcement.
-//! Keeping these plain preserves exact round-trip and avoids introducing a new
-//! validation semantic in Task 4.
+//! Thin `#[serde(transparent)]` wrappers over `String` for type-level
+//! distinction between reference kinds, without changing the wire form. Format
+//! patterns (e.g. the RR-NNN finding-id form) are schema-enforced, not checked
+//! here, which keeps round-trip exact.
 
 use serde::{Deserialize, Serialize};
 
