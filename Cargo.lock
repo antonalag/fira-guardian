@@ -294,6 +294,10 @@ name = "fira-policy"
 version = "0.0.0"
 dependencies = [
  "fira-core",
+ "jsonschema",
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]

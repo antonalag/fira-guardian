@@ -7,5 +7,17 @@ rust-version.workspace = true
 description = "FIRA Guardian POLICY — versioned data: the 5 built-in audit profiles, severity model, confidence-rubric parameters, release-gate rules."
 
 # POLICY is data consumed by CORE. It may depend at most on fira-core (AC-6).
+# serde is a pure, host-capability-free data library (same rationale as fira-core):
+# it grants no FS/process/network capability, so it does not weaken POLICY's
+# platform independence. It backs the S2 AuditProfile (de)serialization.
 [dependencies]
 fira-core = { path = "../fira-core" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
+# jsonschema + url are used only by the test targets to validate the built-in
+# profiles against the bundled S2 JSON Schema (Draft 2020-12), offline. They are
+# dev-dependencies so they never enter POLICY's runtime dependency set.
+jsonschema = "0.17"
+url = "2"
