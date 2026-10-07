@@ -15,6 +15,7 @@
 mod batch_pipeline;
 mod cli_tool;
 mod library;
+pub mod selection;
 mod stateful_distributed;
 mod web_service;
 

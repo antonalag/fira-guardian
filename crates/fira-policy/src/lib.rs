@@ -19,3 +19,6 @@ pub use profiles::{
     all, profile_for, AuditProfile, MinimumEvidenceExpectation, ProfileGate, ALL_IDS,
     PROFILE_VERSION,
 };
+pub use profiles::selection::{
+    confirm_gate_view, confirm_gate_view_for, AppliedSelection, ConfirmGateView,
+};
