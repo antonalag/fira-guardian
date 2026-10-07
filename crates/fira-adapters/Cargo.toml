@@ -11,3 +11,9 @@ fira-core = { path = "../fira-core" }
 fira-policy = { path = "../fira-policy" }
 fira-runtime = { path = "../fira-runtime" }
 fira-presentation = { path = "../fira-presentation" }
+# Shared CLI arg types used by run_audit (the binary delegates parsing here).
+clap = { version = "4.5", features = ["derive"] }
+
+[dev-dependencies]
+# End-to-end CLI tests on a throwaway project tree (test-only).
+tempfile = "3"

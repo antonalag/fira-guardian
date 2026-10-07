@@ -13,3 +13,6 @@ path = "src/main.rs"
 [dependencies]
 fira-adapters = { path = "../fira-adapters" }
 fira-core = { path = "../fira-core" }
+fira-presentation = { path = "../fira-presentation" }
+# Parse the `audit` subcommand + flags into typed args.
+clap = { version = "4.5", features = ["derive"] }

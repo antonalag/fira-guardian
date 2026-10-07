@@ -9,3 +9,5 @@ description = "FIRA Guardian PRESENTATION — renders JSON/Markdown from the can
 # PRESENTATION renders CORE's report types; depends on fira-core only.
 [dependencies]
 fira-core = { path = "../fira-core" }
+# Canonical JSON rendering of the AuditReport. Pure data library.
+serde_json = "1"
