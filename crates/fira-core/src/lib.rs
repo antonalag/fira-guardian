@@ -77,6 +77,11 @@ pub mod confidence;
 /// recompute-and-compare hook.
 pub mod verdict;
 
+/// P1 system classification (§12): structural signals → `ProfileId` (or
+/// `Undetermined`). Generic classification only — no `AuditProfile`/POLICY
+/// reference. Profile resolution and the confirm-gate projection are POLICY.
+pub mod classification;
+
 #[cfg(test)]
 mod contract_version_test {
     use super::CONTRACT_VERSION;
