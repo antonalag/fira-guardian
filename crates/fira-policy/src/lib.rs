@@ -2,14 +2,20 @@
 //!
 //! Versioned policy data consumed by CORE: the five built-in audit profiles
 //! (`library`, `cli_tool`, `web_service`, `stateful_distributed`,
-//! `batch_pipeline`), the severity model, confidence-rubric parameters, and
-//! release-gate rules (Frozen MVP Contract: Profiles, PROF-1).
+//! `batch_pipeline`). Per Layer ownership, POLICY depends at most on `fira-core`.
 //!
-//! Per Layer ownership, POLICY depends at most on `fira-core`.
+//! Profiles are data, not behavior: they set per-gate requirement levels,
+//! focus areas, typical failure modes, and minimum-evidence expectations. They
+//! never define gate evaluation (§7) or verdict computation (§11, Task 7).
 //!
-//! ## Task 1 scope
-//! Home only. No profiles, rubric parameters, or rules are implemented yet;
-//! that is Task 8 (profiles + classifier) and Task 6 (rubric parameters).
+//! The frozen severity enum (S7) and the parameter-free confidence rubric
+//! (Task 6) satisfy §1's other POLICY phrases; this crate introduces no severity
+//! or confidence parameters.
 
-/// Built-in audit profiles (S2). Implemented in Task 8.
-pub mod profiles {}
+/// Built-in audit profiles (S2).
+pub mod profiles;
+
+pub use profiles::{
+    all, profile_for, AuditProfile, MinimumEvidenceExpectation, ProfileGate, ALL_IDS,
+    PROFILE_VERSION,
+};
