@@ -30,7 +30,11 @@ pub enum EpistemicConclusion {
 }
 
 /// MVP project-tree capabilities (CAP-1). MVP = {READ, EXECUTE_EXISTING}.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// `Ord` is derived so the §17 `CommandExecutor::capabilities() ->
+/// BTreeSet<Capability>` return type is usable; it adds no variant and no wire
+/// change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Capability {
     #[serde(rename = "READ")]
     Read,
