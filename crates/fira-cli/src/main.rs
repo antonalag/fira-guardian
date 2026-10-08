@@ -13,7 +13,10 @@ use fira_adapters::cli::{run_audit, write_output, AuditArgs, Format};
 use fira_presentation::{render_json, render_markdown};
 
 #[derive(Debug, Parser)]
-#[command(name = "fira-guardian", about = "Independent Release Readiness Auditor")]
+#[command(
+    name = "fira-guardian",
+    about = "Independent Release Readiness Auditor"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -52,6 +55,14 @@ fn run(args: AuditArgs) -> ExitCode {
         }
     };
 
+    // The canonical audit-workspace artifacts (WS-1) are already persisted by the
+    // adapter. Report that location first so the user knows the authoritative
+    // output; stdout/`--output` are clearly labeled as exported copies (§9.4).
+    eprintln!(
+        "canonical audit-workspace artifacts: {}",
+        out.canonical_location
+    );
+
     let json = render_json(&out.report);
     let md = render_markdown(&out.report);
     let rendered = match format {
@@ -67,7 +78,7 @@ fn run(args: AuditArgs) -> ExitCode {
         }
         Some(path) => match write_output(&project, &path, rendered.as_bytes()) {
             Ok(written) => {
-                println!("report written to {}", written.display());
+                println!("exported copy written to {}", written.display());
                 ExitCode::SUCCESS
             }
             Err(e) => {

@@ -7,4 +7,4 @@
 /// JSON / Markdown rendering from `AuditReport`.
 pub mod render;
 
-pub use render::{render_json, render_markdown};
+pub use render::{parse_json, render_json, render_markdown};

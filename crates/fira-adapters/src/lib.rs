@@ -10,5 +10,10 @@
 /// CLI adapter wiring (first MVP adapter).
 pub mod cli;
 
+/// Adapter-side persistence wiring (Task 11, WS-1): the §17
+/// `AuditContextProvider` implementor (renders via PRESENTATION, writes bytes via
+/// the RUNTIME `WorkspaceSink`) and the `std::env` default-base resolver.
+pub mod persistence;
+
 /// Kiro adapter wiring (second MVP adapter). Implemented in Task 13.
 pub mod kiro {}
