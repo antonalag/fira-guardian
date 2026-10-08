@@ -230,11 +230,24 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
     // outcome) and their reason is surfaced as a coverage limitation (C11: "not
     // sufficiently audited"). Nothing becomes PASS (C5).
     let mut mechanism_limitations: Vec<String> = Vec::new();
+    // Visibility slice: a declared mechanism that executes and FAILS is explicit
+    // negative execution evidence. We record each as a known-limitation entry so
+    // the failure is impossible to miss in the report — WITHOUT interpreting it
+    // (no APP/INFRA classification, no captured_output parsing, no gate change,
+    // no finding). The raw `executed_mechanisms` row is preserved unchanged.
+    let mut failed_mechanism_notes: Vec<String> = Vec::new();
     for m in &mechanisms {
         match executor.run_existing(&m.mechanism.id) {
             Ok(result) => {
                 if let Some(reason) = &result.blocking_condition {
                     mechanism_limitations.push(format!("{}: {reason}", result.command));
+                }
+                if result.outcome == ExecutionOutcome::Failed {
+                    failed_mechanism_notes.push(format!(
+                        "Declared verification mechanism '{}' executed and FAILED; \
+                         failure is not yet interpreted as an application defect.",
+                        result.command_id.0
+                    ));
                 }
                 executed.push(ExecutedMechanism {
                     command_id: result.command_id.clone(),
@@ -244,6 +257,16 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
             }
             Err(_) => { /* capability gap → recorded as a limitation below */ }
         }
+    }
+    // One summary line (the failure count) followed by the individual entries,
+    // so a skimming reviewer sees the count immediately (spec §9.2).
+    if !failed_mechanism_notes.is_empty() {
+        mechanism_limitations.push(format!(
+            "{} declared verification mechanism(s) executed and FAILED; recorded as \
+             negative execution evidence, not yet interpreted as application defects.",
+            failed_mechanism_notes.len()
+        ));
+        mechanism_limitations.extend(failed_mechanism_notes);
     }
 
     // 5. Assemble an honest report. The P2–P11 interpretation pipeline is

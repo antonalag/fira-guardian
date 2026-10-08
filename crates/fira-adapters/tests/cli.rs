@@ -590,3 +590,128 @@ fn fencing_property_absent_on_non_store_project() {
         "no fencing audit on a non-store project"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Visibility slice: FAILED declared verification mechanisms are surfaced as
+// explicit negative execution evidence in coverage.known_limitations — without
+// changing gate states or creating findings.
+// ---------------------------------------------------------------------------
+
+/// A Makefile with passing backing targets (build/test) plus, when
+/// `with_failing`, failing non-backing targets (check/init → `false`).
+fn makefile_project(with_failing: bool) -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let mut mk = String::from("build:\n\ttrue\ntest:\n\ttrue\n");
+    if with_failing {
+        mk.push_str("check:\n\tfalse\ninit:\n\tfalse\n");
+    }
+    fs::write(dir.path().join("Makefile"), mk).unwrap();
+    dir
+}
+
+/// AC-1/AC-3: each FAILED declared mechanism is surfaced as a negative-evidence
+/// known-limitation (named, states FAILED, explicitly not-yet-interpreted), with
+/// a leading failure-count summary — and no VR9 adjudication language.
+#[test]
+fn failed_mechanisms_are_surfaced_as_negative_evidence() {
+    let dir = makefile_project(true);
+    let ws = tempdir().unwrap();
+    let mut a = args_with_workspace(dir.path().to_path_buf(), ws.path());
+    a.profile = Some(ProfileArg::CliTool);
+    a.assume_yes = true;
+    let out = run_audit(a).expect("audit runs");
+
+    let lims = &out.report.coverage.known_limitations;
+    // One entry per failing mechanism (make-check, make-init), each named + FAILED.
+    for id in ["make-check", "make-init"] {
+        assert!(
+            lims.iter()
+                .any(|l| l.contains(id) && l.contains("FAILED") && l.contains("not yet interpreted")),
+            "a negative-evidence entry must name {id} and state FAILED + not-yet-interpreted; got {lims:?}"
+        );
+    }
+    // The count summary line is present.
+    assert!(
+        lims.iter()
+            .any(|l| l.contains("declared verification mechanism(s) executed and FAILED")),
+        "a failure-count summary line must be present; got {lims:?}"
+    );
+    // No VR9 adjudication language. VR9 prohibits exactly the whole words
+    // "correct" and "safe" in adjudication-bearing fields; the entries state a
+    // neutral outcome ("executed and FAILED") + an explicit non-claim and must
+    // not use those adjudication adjectives.
+    for l in lims {
+        let words: Vec<String> = l
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .map(|w| w.to_ascii_lowercase())
+            .collect();
+        for banned in ["correct", "safe"] {
+            assert!(
+                !words.iter().any(|w| w == banned),
+                "limitation must avoid the VR9 adjudication word '{banned}': {l}"
+            );
+        }
+    }
+}
+
+/// AC-2: the raw executed_mechanisms rows are preserved (the failing mechanisms
+/// still appear with outcome FAILED) — the slice adds, never removes.
+#[test]
+fn failed_mechanisms_raw_rows_preserved() {
+    use fira_core::model::ExecutionOutcome;
+    let dir = makefile_project(true);
+    let ws = tempdir().unwrap();
+    let mut a = args_with_workspace(dir.path().to_path_buf(), ws.path());
+    a.profile = Some(ProfileArg::CliTool);
+    a.assume_yes = true;
+    let out = run_audit(a).expect("audit runs");
+
+    let rows = &out.report.coverage.executed_mechanisms;
+    for id in ["make-check", "make-init"] {
+        assert!(
+            rows.iter()
+                .any(|r| r.command_id.0 == id && r.outcome == ExecutionOutcome::Failed),
+            "{id} must still appear as a FAILED executed_mechanism row"
+        );
+    }
+}
+
+/// AC-4 (the critical safety test): adding failing NON-backing mechanisms does
+/// not change any gate state. Build/Tests still PASS from their backing
+/// mechanisms; every other gate stays UNKNOWN — identical with and without the
+/// failing targets.
+#[test]
+fn failed_mechanisms_do_not_change_gate_states() {
+    let gates_of = |with_failing: bool| {
+        let dir = makefile_project(with_failing);
+        let ws = tempdir().unwrap();
+        let mut a = args_with_workspace(dir.path().to_path_buf(), ws.path());
+        a.profile = Some(ProfileArg::CliTool);
+        a.assume_yes = true;
+        let out = run_audit(a).expect("audit runs");
+        let mut gs: Vec<(GateName, GateState)> =
+            out.report.gates.iter().map(|g| (g.name, g.state)).collect();
+        gs.sort_by_key(|(n, _)| format!("{n:?}"));
+        gs
+    };
+    assert_eq!(
+        gates_of(false),
+        gates_of(true),
+        "failing non-backing mechanisms must not alter any gate state"
+    );
+}
+
+/// AC-5: no finding is synthesized from a failure, regardless of failures.
+#[test]
+fn failed_mechanisms_create_no_findings() {
+    let dir = makefile_project(true);
+    let ws = tempdir().unwrap();
+    let mut a = args_with_workspace(dir.path().to_path_buf(), ws.path());
+    a.profile = Some(ProfileArg::CliTool);
+    a.assume_yes = true;
+    let out = run_audit(a).expect("audit runs");
+    assert!(
+        out.report.findings.is_empty(),
+        "a failure must not create a finding"
+    );
+}
