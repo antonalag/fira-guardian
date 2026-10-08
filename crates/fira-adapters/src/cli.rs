@@ -214,12 +214,22 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
 
     // 4. Execute each discovered mechanism (raw results only).
     let mut executed: Vec<ExecutedMechanism> = Vec::new();
+    // Task 14: a non-terminating mechanism returns NOT_RUN with a reason; a hung
+    // one returns TIMEOUT. Both are recorded as executed_mechanisms (with their
+    // outcome) and their reason is surfaced as a coverage limitation (C11: "not
+    // sufficiently audited"). Nothing becomes PASS (C5).
+    let mut mechanism_limitations: Vec<String> = Vec::new();
     for m in &mechanisms {
         match executor.run_existing(&m.mechanism.id) {
-            Ok(result) => executed.push(ExecutedMechanism {
-                command_id: result.command_id,
-                outcome: result.outcome,
-            }),
+            Ok(result) => {
+                if let Some(reason) = &result.blocking_condition {
+                    mechanism_limitations.push(format!("{}: {reason}", result.command));
+                }
+                executed.push(ExecutedMechanism {
+                    command_id: result.command_id,
+                    outcome: result.outcome,
+                });
+            }
             Err(_) => { /* capability gap → recorded as a limitation below */ }
         }
     }
@@ -248,7 +258,7 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
             .unwrap_or(HumanDecisionFiraState::Pending),
     };
 
-    let coverage = build_coverage(&gates, executed);
+    let coverage = build_coverage(&gates, executed, mechanism_limitations);
 
     let report = AuditReport {
         schema_version: "1.0.0".to_string(),
@@ -392,7 +402,11 @@ fn build_unevaluated_gates(profile: &fira_policy::AuditProfile) -> Vec<Gate> {
 /// Build an honest coverage statement: every gate maps to a coverage entry
 /// (VR8), executed mechanisms are recorded, and the deferred-interpretation
 /// limitation is stated.
-fn build_coverage(gates: &[Gate], executed: Vec<ExecutedMechanism>) -> CoverageStatement {
+fn build_coverage(
+    gates: &[Gate],
+    executed: Vec<ExecutedMechanism>,
+    mechanism_limitations: Vec<String>,
+) -> CoverageStatement {
     let skipped_areas = gates
         .iter()
         .map(|g| SkippedArea {
@@ -400,17 +414,22 @@ fn build_coverage(gates: &[Gate], executed: Vec<ExecutedMechanism>) -> CoverageS
             reason: "audit interpretation (P2-P11) not yet performed".to_string(),
         })
         .collect();
+    let mut known_limitations = vec![
+        "Task 10 minimal run: mechanisms discovered and executed, but evidence \
+         interpretation, finding derivation, and gate-state derivation are not \
+         yet implemented."
+            .to_string(),
+    ];
+    // Task 14: surface each not-executed (NOT_RUN) / timed-out (TIMEOUT)
+    // mechanism and its reason, so the report distinguishes "not sufficiently
+    // audited" from "no issue found" (C11). These never imply PASS (C5).
+    known_limitations.extend(mechanism_limitations);
     CoverageStatement {
         audited_areas: Vec::new(),
         skipped_areas,
         blocked_areas: Vec::new(),
         executed_mechanisms: executed,
-        known_limitations: vec![
-            "Task 10 minimal run: mechanisms discovered and executed, but evidence \
-             interpretation, finding derivation, and gate-state derivation are not \
-             yet implemented."
-                .to_string(),
-        ],
+        known_limitations,
         assumptions: Vec::new(),
         unanchored_hypotheses: Vec::new(),
     }
