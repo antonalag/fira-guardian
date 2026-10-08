@@ -10,9 +10,12 @@ use clap::{Parser, ValueEnum};
 
 use fira_core::assessment::{HumanDecisionFira, TechnicalAssessment};
 use fira_core::classification::{classify, Classification};
-use fira_core::coverage::{CoverageStatement, ExecutedMechanism, SkippedArea};
+use fira_core::coverage::{AuditedArea, CoverageStatement, ExecutedMechanism, SkippedArea};
+use fira_core::execution::{ExecutionResult, VerificationMechanism};
 use fira_core::gate::Gate;
+use fira_core::gate_eval::{evaluate_execution_backed_gates, ExecutedMechanismResult};
 use fira_core::interfaces::CommandExecutor;
+use fira_core::model::CoverageResult;
 use fira_core::model::{
     Depth, GateCause, GateName, GateState, HumanDecisionFiraState, ProfileId, RequirementLevel,
 };
@@ -214,6 +217,11 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
 
     // 4. Execute each discovered mechanism (raw results only).
     let mut executed: Vec<ExecutedMechanism> = Vec::new();
+    // Retain the full ExecutionResult + its declared mechanism record so the
+    // Tests/Build gate evaluation (step 5) can read the real outcomes. This is
+    // adapter-internal data flow; the coverage `executed_mechanisms` summary is
+    // still the `{command_id, outcome}` pair.
+    let mut executed_results: Vec<(VerificationMechanism, ExecutionResult)> = Vec::new();
     // Task 14: a non-terminating mechanism returns NOT_RUN with a reason; a hung
     // one returns TIMEOUT. Both are recorded as executed_mechanisms (with their
     // outcome) and their reason is surfaced as a coverage limitation (C11: "not
@@ -226,9 +234,10 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
                     mechanism_limitations.push(format!("{}: {reason}", result.command));
                 }
                 executed.push(ExecutedMechanism {
-                    command_id: result.command_id,
+                    command_id: result.command_id.clone(),
                     outcome: result.outcome,
                 });
+                executed_results.push((m.mechanism.clone(), result));
             }
             Err(_) => { /* capability gap → recorded as a limitation below */ }
         }
@@ -236,11 +245,31 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
 
     // 5. Assemble an honest report. The P2–P11 interpretation pipeline is
     //    deferred, so no finding is derived and no gate STATE is derived from
-    //    evidence. Each profile gate is recorded at its UNKNOWN ("not
-    //    sufficiently audited", C11) state — this is the honest absence of
-    //    interpretation, not a §7 decision-table derivation. N/A gates stay N/A
-    //    (that is a profile fact, not an evidence derivation).
-    let gates = build_unevaluated_gates(&profile);
+    //    evidence — EXCEPT the execution-grounded Tests/Build slice. Every gate
+    //    starts UNKNOWN ("not sufficiently audited", C11; N/A stays a profile
+    //    fact); then the pure CORE `gate_eval` step derives the Tests and Build
+    //    gate states from the real ExecutionResults (§6/§7). Only those two gates
+    //    may change; findings remain empty (no P2-P8 synthesis in this slice).
+    let mut gates = build_unevaluated_gates(&profile);
+    let profile_gate_levels: Vec<(GateName, RequirementLevel)> = profile
+        .gates
+        .iter()
+        .map(|g| (g.gate, g.requirement_level))
+        .collect();
+    let backed: Vec<ExecutedMechanismResult<'_>> = executed_results
+        .iter()
+        .map(|(mech, result)| ExecutedMechanismResult {
+            mechanism: mech,
+            result,
+        })
+        .collect();
+    let evaluated = evaluate_execution_backed_gates(&profile_gate_levels, &backed);
+    // Merge: a gate_eval result replaces the UNKNOWN default for the same gate.
+    for ev in evaluated {
+        if let Some(slot) = gates.iter_mut().find(|g| g.name == ev.name) {
+            *slot = ev;
+        }
+    }
     let findings = Vec::new();
 
     let recomputed = compute_assessment(&gates, &findings, &ExpectationViolations::none());
@@ -407,13 +436,29 @@ fn build_coverage(
     executed: Vec<ExecutedMechanism>,
     mechanism_limitations: Vec<String>,
 ) -> CoverageStatement {
-    let skipped_areas = gates
-        .iter()
-        .map(|g| SkippedArea {
-            area: gate_wire(&g.name),
-            reason: "audit interpretation (P2-P11) not yet performed".to_string(),
-        })
-        .collect();
+    // A gate the slice actually evaluated (PASS/FAIL) is an *audited* area;
+    // every other gate remains a *skipped* area ("not sufficiently audited").
+    // Every gate still appears in exactly one coverage entry (VR8).
+    let mut audited_areas: Vec<AuditedArea> = Vec::new();
+    let mut skipped_areas: Vec<SkippedArea> = Vec::new();
+    for g in gates {
+        match g.state {
+            GateState::Pass => audited_areas.push(AuditedArea {
+                area: gate_wire(&g.name),
+                depth: Depth::Standard,
+                result: CoverageResult::NoIssueFound,
+            }),
+            GateState::Fail => audited_areas.push(AuditedArea {
+                area: gate_wire(&g.name),
+                depth: Depth::Standard,
+                result: CoverageResult::IssuesFound,
+            }),
+            _ => skipped_areas.push(SkippedArea {
+                area: gate_wire(&g.name),
+                reason: "audit interpretation (P2-P11) not yet performed".to_string(),
+            }),
+        }
+    }
     let mut known_limitations = vec![
         "Task 10 minimal run: mechanisms discovered and executed, but evidence \
          interpretation, finding derivation, and gate-state derivation are not \
@@ -425,7 +470,7 @@ fn build_coverage(
     // audited" from "no issue found" (C11). These never imply PASS (C5).
     known_limitations.extend(mechanism_limitations);
     CoverageStatement {
-        audited_areas: Vec::new(),
+        audited_areas,
         skipped_areas,
         blocked_areas: Vec::new(),
         executed_mechanisms: executed,
