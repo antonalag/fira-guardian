@@ -82,6 +82,12 @@ pub mod verdict;
 /// reference. Profile resolution and the confirm-gate projection are POLICY.
 pub mod classification;
 
+/// Re-audit lifecycle reconciliation (§14): a pure CORE step that computes each
+/// current finding's `lifecycle_status`/`regression` from the current round and
+/// an optional prior report. Never changes verdict weight ([`verdict`]) and
+/// performs no FS/process I/O (the prior report is handed in as data).
+pub mod lifecycle;
+
 #[cfg(test)]
 mod contract_version_test {
     use super::CONTRACT_VERSION;
