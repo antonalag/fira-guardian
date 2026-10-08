@@ -20,11 +20,15 @@ use fira_core::report::{AppliedProfile, AppliedProfileGate, AuditReport};
 use fira_core::request::AuditRequest;
 use fira_core::verdict::{compute_assessment, ExpectationViolations};
 
+use fira_core::interfaces::AuditContextProvider;
+
 use fira_policy::{confirm_gate_view, profile_for, AppliedSelection, ConfirmGateView};
 use fira_runtime::{
     detect_signals, discover, FsRepositoryReader, MechanismRegistry, OutputSink,
     ProjectCommandExecutor,
 };
+
+use crate::persistence::{resolve_default_base, AdapterAuditContextProvider};
 
 /// Output format for the rendered report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -97,10 +101,17 @@ pub struct AuditArgs {
     /// Output format.
     #[arg(long, value_enum, default_value_t = Format::Both)]
     pub format: Format,
-    /// Optional file to write to (validated by the runtime; never under the
-    /// project tree). Absent ⇒ stdout.
+    /// Optional file to write an *exported copy* to (validated by the runtime;
+    /// never under the project tree). Absent ⇒ stdout. This is distinct from the
+    /// canonical audit-workspace artifacts (§9.4).
     #[arg(long)]
     pub output: Option<PathBuf>,
+    /// Audit-workspace base directory (the canonical persistence location, WS-1).
+    /// Absent ⇒ a per-user platform data dir is resolved (`std::env` only, §4.1);
+    /// if none qualifies the run fails asking for `--workspace`. Never the
+    /// project tree.
+    #[arg(long)]
+    pub workspace: Option<PathBuf>,
 }
 
 /// Errors surfaced by the adapter.
@@ -114,6 +125,11 @@ pub enum AdapterError {
     NeedsExplicitConfirmation(ProfileId),
     /// The output path was rejected by the runtime (WS-1/P-1).
     Output(String),
+    /// The audit-workspace base could not be resolved (no `--workspace` and no
+    /// qualifying default location).
+    WorkspaceUnresolved(String),
+    /// Persisting the canonical report to the audit workspace failed (WS-1).
+    Persist(String),
 }
 
 impl core::fmt::Display for AdapterError {
@@ -129,17 +145,24 @@ impl core::fmt::Display for AdapterError {
                 "classifier proposes profile {p:?}; re-run with --yes to confirm it, or --profile <id> to choose explicitly (no implicit default)"
             ),
             AdapterError::Output(e) => write!(f, "{e}"),
+            AdapterError::WorkspaceUnresolved(e) => write!(f, "{e}"),
+            AdapterError::Persist(e) => write!(f, "failed to persist report to audit workspace: {e}"),
         }
     }
 }
 
 impl std::error::Error for AdapterError {}
 
-/// The adapter's result: the applied selection and the finished report.
+/// The adapter's result: the applied selection, the finished report, and the
+/// canonical audit-workspace location it was persisted to (§9.4).
 pub struct AuditOutput {
     pub applied: AppliedSelection,
     pub view: ConfirmGateView,
     pub report: AuditReport,
+    /// The canonical `<base>/<audit-id>/` directory where `report.{json,md}` were
+    /// written (WS-1). This is authoritative; stdout/`--output` are exported
+    /// copies.
+    pub canonical_location: String,
 }
 
 /// Whether the current process is attached to an interactive terminal. Used only
@@ -162,8 +185,16 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
     let executor = ProjectCommandExecutor::new(registry, &root);
 
     // 2. Build the AuditRequest (S1), execution_boundary = {READ, EXECUTE_EXISTING}.
+    // Compose a distinct id per run so a fresh audit never collides with another
+    // by construction (design §2.4: `<sanitized-release-target>-<nonce>`). The
+    // nonce is a `std::time`-derived token — no new crate, no network.
+    let audit_id = format!(
+        "audit-{}-{}",
+        sanitized_id(&args.release_target),
+        audit_nonce()
+    );
     let request = AuditRequest {
-        audit_id: Some(format!("audit-{}", sanitized_id(&args.release_target))),
+        audit_id: Some(audit_id),
         project_root: root.to_string_lossy().into_owned(),
         release_target: args.release_target.clone(),
         execution_boundary: executor.capabilities().into_iter().collect(),
@@ -253,7 +284,46 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
         determinism_inputs_hash: String::new(),
     };
 
-    Ok(AuditOutput { applied, view, report })
+    // Persist the canonical report to the external audit workspace (WS-1) by
+    // default (§9.4). The ADAPTER renders via PRESENTATION inside the provider;
+    // the RUNTIME `WorkspaceSink` publishes the bytes. The project tree is never
+    // written. stdout/`--output` remain exported copies, handled by the caller.
+    let workspace_base = match args.workspace.clone() {
+        Some(base) => base,
+        None => resolve_default_base().map_err(AdapterError::WorkspaceUnresolved)?,
+    };
+    std::fs::create_dir_all(&workspace_base).map_err(|e| {
+        AdapterError::Persist(format!(
+            "could not create workspace base {}: {e}",
+            workspace_base.display()
+        ))
+    })?;
+    let provider = AdapterAuditContextProvider::new(request.clone(), &workspace_base, &root)
+        .map_err(|e| AdapterError::Persist(e.to_string()))?;
+    let location = provider
+        .persist_report(&report)
+        .map_err(|e| AdapterError::Persist(e.to_string()))?;
+
+    Ok(AuditOutput {
+        applied,
+        view,
+        report,
+        canonical_location: location.0,
+    })
+}
+
+/// A `std::time`-derived token used to make each run's `audit_id` distinct by
+/// construction (design §2.4). No new crate, no network.
+fn audit_nonce() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{nanos:x}-{seq:x}")
 }
 
 /// Apply the exact §9.4 confirm semantics.
@@ -274,13 +344,17 @@ fn settle_selection(
             let p = *profile_id;
             if assume_yes {
                 // Explicit confirmation of the proposed profile.
-                Ok(AppliedSelection::confirm(proposal)
-                    .expect("Classified proposal is confirmable"))
+                Ok(
+                    AppliedSelection::confirm(proposal)
+                        .expect("Classified proposal is confirmable"),
+                )
             } else if stdin_is_tty() {
                 // An interactive confirm would prompt here; the library default
                 // treats a Classified proposal as confirmed only via the caller.
-                Ok(AppliedSelection::confirm(proposal)
-                    .expect("Classified proposal is confirmable"))
+                Ok(
+                    AppliedSelection::confirm(proposal)
+                        .expect("Classified proposal is confirmable"),
+                )
             } else {
                 // Non-interactive, no --yes: do not auto-accept.
                 Err(AdapterError::NeedsExplicitConfirmation(p))
@@ -297,7 +371,9 @@ fn build_unevaluated_gates(profile: &fira_policy::AuditProfile) -> Vec<Gate> {
         .iter()
         .map(|g| {
             let (state, cause) = match g.requirement_level {
-                RequirementLevel::NotApplicable => (GateState::NotApplicable, Some(GateCause::None)),
+                RequirementLevel::NotApplicable => {
+                    (GateState::NotApplicable, Some(GateCause::None))
+                }
                 _ => (GateState::Unknown, Some(GateCause::None)),
             };
             Gate {

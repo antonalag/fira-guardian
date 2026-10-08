@@ -12,14 +12,17 @@
 //!
 //! RUNTIME is the *primary* enforcement mechanism for CAP-1/EXEC-1 (together with
 //! the architectural/dependency boundary — ADR-002). External audit-workspace
-//! persistence (WS-1 report saving) is Task 11.
+//! persistence (WS-1 report saving, [`persistence::WorkspaceSink`]) is Task 11;
+//! it is bytes-in and bound to a workspace base distinct from the project tree.
 
 pub mod capability;
 pub mod discovery;
 pub mod evidence;
 pub mod execution;
+pub mod persistence;
 
 pub use capability::{FsRepositoryReader, OutputPathError, OutputSink};
 pub use discovery::{detect_signals, discover, DiscoveredMechanism};
 pub use evidence::EvidenceCollectorImpl;
 pub use execution::{MechanismRegistry, ProjectCommandExecutor};
+pub use persistence::{FsyncObserver, OverwritePolicy, RealFsync, WorkspaceError, WorkspaceSink};

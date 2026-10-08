@@ -14,14 +14,28 @@ pub fn render_json(report: &AuditReport) -> String {
     serde_json::to_string_pretty(report).expect("AuditReport serializes to JSON")
 }
 
+/// Parse canonical report JSON back into an [`AuditReport`] — the inverse of
+/// [`render_json`] (the round-trip the renderer guarantees). Used to load a
+/// prior report as historical input (C12); it never adjudicates or mutates.
+/// Returns the serde error message on malformed input.
+pub fn parse_json(text: &str) -> Result<AuditReport, String> {
+    serde_json::from_str(text).map_err(|e| e.to_string())
+}
+
 /// Render a read-only human view as Markdown. Displays recorded fields only.
 pub fn render_markdown(report: &AuditReport) -> String {
     let mut md = String::new();
 
-    md.push_str(&format!("# FIRA Guardian Audit Report — {}\n\n", report.audit_id));
+    md.push_str(&format!(
+        "# FIRA Guardian Audit Report — {}\n\n",
+        report.audit_id
+    ));
     md.push_str(&format!("- schema version: {}\n", report.schema_version));
     md.push_str(&format!("- created at: {}\n", report.created_at));
-    md.push_str(&format!("- release target: {}\n", report.request.release_target));
+    md.push_str(&format!(
+        "- release target: {}\n",
+        report.request.release_target
+    ));
     md.push_str(&format!(
         "- applied profile: {} (v{})\n\n",
         profile_id_label(&report.applied_profile.profile_id),
@@ -37,7 +51,10 @@ pub fn render_markdown(report: &AuditReport) -> String {
         "- result: {}\n",
         assessment_label(&report.technical_assessment.result)
     ));
-    md.push_str(&format!("- human decision: {}\n\n", human_decision_label(report)));
+    md.push_str(&format!(
+        "- human decision: {}\n\n",
+        human_decision_label(report)
+    ));
 
     md.push_str("## Gates\n\n");
     if report.gates.is_empty() {
@@ -60,7 +77,12 @@ pub fn render_markdown(report: &AuditReport) -> String {
         md.push_str("_No findings recorded._\n\n");
     } else {
         for f in &report.findings {
-            md.push_str(&format!("- **{}** ({}): {}\n", f.id.0, severity_label(&f.severity), f.title));
+            md.push_str(&format!(
+                "- **{}** ({}): {}\n",
+                f.id.0,
+                severity_label(&f.severity),
+                f.title
+            ));
         }
         md.push('\n');
     }
@@ -115,8 +137,14 @@ wire_label!(gate_name_label, fira_core::model::GateName);
 wire_label!(requirement_level_label, fira_core::model::RequirementLevel);
 wire_label!(gate_state_label, fira_core::model::GateState);
 wire_label!(severity_label, fira_core::model::Severity);
-wire_label!(assessment_label, fira_core::model::TechnicalAssessmentResult);
-wire_label!(human_decision_label_state, fira_core::model::HumanDecisionFiraState);
+wire_label!(
+    assessment_label,
+    fira_core::model::TechnicalAssessmentResult
+);
+wire_label!(
+    human_decision_label_state,
+    fira_core::model::HumanDecisionFiraState
+);
 
 fn human_decision_label(report: &AuditReport) -> String {
     human_decision_label_state(&report.human_decision.state)
