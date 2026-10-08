@@ -88,6 +88,13 @@ pub mod classification;
 /// performs no FS/process I/O (the prior report is handed in as data).
 pub mod lifecycle;
 
+/// Execution-grounded gate evaluation (§6/§7, Tests + Build slice): a pure CORE
+/// step that derives the Tests/Build gate states from the raw `ExecutionResult`s
+/// of project-declared mechanisms. Only canonical test/build mechanisms back a
+/// gate; all other gates stay `UNKNOWN`. Never produces a static VERIFIED
+/// (C6/VR11); fail-safe (C5). The verdict engine ([`verdict`]) is unchanged.
+pub mod gate_eval;
+
 #[cfg(test)]
 mod contract_version_test {
     use super::CONTRACT_VERSION;

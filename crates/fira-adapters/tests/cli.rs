@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use fira_adapters::cli::{run_audit, write_output, AuditArgs, Format, ProfileArg};
 use fira_adapters::persistence::{resolve_default_base_with, OsFamily};
-use fira_core::model::ProfileId;
+use fira_core::model::{GateName, GateState, ProfileId, TechnicalAssessmentResult};
 use tempfile::tempdir;
 
 /// Build audit args with an explicit workspace base (outside the project tree)
@@ -262,4 +262,125 @@ fn prior_report_loader_reads_and_structurally_accepts() {
     // A missing path is None, not an error.
     let missing = ws.path().join("nope/report.json");
     assert!(load_prior_report(&missing).unwrap().is_none());
+}
+
+/// Execution-grounded Tests + Build gate evaluation (vertical slice), end to end.
+///
+/// A `durable-agents`-shaped fixture: declared `test`/`build` mechanisms that
+/// execute and pass, plus a declared watcher-like target. After the audit:
+///   - Tests and Build gates are PASS (real execution evidence);
+///   - every other profile gate stays UNKNOWN ("not sufficiently audited");
+///   - findings remain empty (no P2–P8 synthesis in this slice);
+///   - the verdict stays NOT_READY because other required gates are UNKNOWN (B4).
+///
+/// It uses a Makefile so the mechanisms run with `make` (no toolchain/network),
+/// with `true` recipes so the run is deterministic and fast.
+#[test]
+fn execution_grounded_tests_build_gates_evaluate() {
+    let dir = tempdir().unwrap();
+    // `make test` / `make build` ⇒ discovered as `make-test` / `make-build`,
+    // which back the Tests / Build gates; both run `true` ⇒ PASSED.
+    fs::write(
+        dir.path().join("Makefile"),
+        "build:\n\ttrue\ntest:\n\ttrue\nlint:\n\ttrue\n",
+    )
+    .unwrap();
+
+    let ws = tempdir().unwrap();
+    let mut a = args_with_workspace(dir.path().to_path_buf(), ws.path());
+    // No manifest ⇒ classifier Undetermined; select a profile that requires
+    // Tests + Build (human authority). cli_tool fits.
+    a.profile = Some(ProfileArg::CliTool);
+    let out = run_audit(a).expect("audit runs to completion");
+
+    let gate = |name: GateName| {
+        out.report
+            .gates
+            .iter()
+            .find(|g| g.name == name)
+            .unwrap_or_else(|| panic!("gate {name:?} missing from report"))
+    };
+
+    // Tests + Build evaluated to PASS from real execution evidence, each with a
+    // SUFFICIENT support mapping (VR1).
+    for name in [GateName::Tests, GateName::Build] {
+        let g = gate(name);
+        assert_eq!(
+            g.state,
+            GateState::Pass,
+            "{name:?} should be PASS; got {:?}",
+            g.state
+        );
+        assert!(
+            !g.support_mappings.is_empty(),
+            "{name:?} PASS must carry execution evidence"
+        );
+    }
+
+    // Every other gate remains UNKNOWN (not sufficiently audited) — only
+    // Tests/Build may change in this slice.
+    for g in &out.report.gates {
+        if g.name != GateName::Tests && g.name != GateName::Build {
+            assert!(
+                matches!(g.state, GateState::Unknown | GateState::NotApplicable),
+                "non-slice gate {:?} must stay UNKNOWN/N/A; got {:?}",
+                g.name,
+                g.state
+            );
+        }
+    }
+
+    // Findings remain empty (no P2–P8 synthesis).
+    assert!(
+        out.report.findings.is_empty(),
+        "no findings synthesized in this slice"
+    );
+
+    // The audited Tests/Build gates appear as coverage audited_areas (NO_ISSUE_FOUND).
+    assert!(
+        out.report
+            .coverage
+            .audited_areas
+            .iter()
+            .any(|a| a.area == "Tests"),
+        "Tests must be an audited area"
+    );
+
+    // Verdict stays NOT_READY: cli_tool has other required gates still UNKNOWN
+    // (B4), even though Tests/Build now PASS. Honest, not cosmetic.
+    assert_eq!(
+        out.report.technical_assessment.result,
+        TechnicalAssessmentResult::NotReady,
+        "other required gates are UNKNOWN ⇒ NOT_READY"
+    );
+}
+
+/// A declared test mechanism that FAILS drives its gate to FAIL (never PASS).
+#[test]
+fn failing_test_mechanism_yields_fail_gate() {
+    let dir = tempdir().unwrap();
+    // `make test` runs `false` ⇒ FAILED; `make build` passes.
+    fs::write(
+        dir.path().join("Makefile"),
+        "build:\n\ttrue\ntest:\n\tfalse\n",
+    )
+    .unwrap();
+
+    let ws = tempdir().unwrap();
+    let mut a = args_with_workspace(dir.path().to_path_buf(), ws.path());
+    a.profile = Some(ProfileArg::CliTool);
+    let out = run_audit(a).expect("audit runs");
+
+    let tests = out
+        .report
+        .gates
+        .iter()
+        .find(|g| g.name == GateName::Tests)
+        .expect("Tests gate present");
+    assert_eq!(
+        tests.state,
+        GateState::Fail,
+        "a failing test mechanism ⇒ FAIL"
+    );
+    assert_ne!(tests.state, GateState::Pass);
 }
