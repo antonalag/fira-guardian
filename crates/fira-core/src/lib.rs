@@ -95,6 +95,14 @@ pub mod lifecycle;
 /// (C6/VR11); fail-safe (C5). The verdict engine ([`verdict`]) is unchanged.
 pub mod gate_eval;
 
+/// Single-property semantic audit (one targeted property: the JournalStore
+/// recovery-generation fencing invariant). A pure CORE classifier over gathered
+/// evidence that honors the §3 facet ladder: a `VERIFIED` conclusion requires an
+/// execution-based `OBSERVED` facet (C6/VR11), so a passing test mechanism alone
+/// never verifies the property (the ceiling is `UNVERIFIED`). Not a generic
+/// extraction framework.
+pub mod property_audit;
+
 #[cfg(test)]
 mod contract_version_test {
     use super::CONTRACT_VERSION;

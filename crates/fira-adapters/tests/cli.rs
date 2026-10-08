@@ -384,3 +384,209 @@ fn failing_test_mechanism_yields_fail_gate() {
     );
     assert_ne!(tests.state, GateState::Pass);
 }
+
+// ---------------------------------------------------------------------------
+// Single-property semantic audit slice: the JournalStore recovery-generation
+// fencing invariant (Option A — UNVERIFIED ceiling). Three store-area fixtures.
+// ---------------------------------------------------------------------------
+
+/// Write a durable-agents-shaped store area. `with_guard` controls whether the
+/// implementation carries the `recovery_generation` CAS guard (IMPLEMENTED), and
+/// `with_fencing_test` whether the test body asserts fenced rejection (TESTED).
+fn write_store_project(dir: &Path, with_guard: bool, with_fencing_test: bool) {
+    fs::create_dir_all(dir.join("src/stores")).unwrap();
+    fs::create_dir_all(dir.join("tests/stores")).unwrap();
+    // A package.json so it is a real project (not required for the property read,
+    // but keeps the fixture realistic).
+    fs::write(
+        dir.join("package.json"),
+        r#"{ "name": "store-fixture", "scripts": { "build": "true", "test": "true" } }"#,
+    )
+    .unwrap();
+    // The interface declares the fencing contract (SPECIFIED signal:
+    // expectedGeneration + FENCED).
+    fs::write(
+        dir.join("src/stores/interface.ts"),
+        "export interface JournalStore {\n  // Fenced: applies only while recovery_generation equals expectedGeneration;\n  // otherwise throws DurableError('FENCED').\n  updateRun(runId: string, updates: unknown, expectedGeneration: number): Promise<unknown>;\n}\n",
+    )
+    .unwrap();
+    // The implementation guard (IMPLEMENTED signal: recovery_generation) present
+    // only when with_guard.
+    let impl_src = if with_guard {
+        "export class SqliteJournalStore {\n  updateRun() {\n    // UPDATE runs SET ... WHERE run_id = ? AND recovery_generation = ?\n  }\n}\n"
+    } else {
+        // Guard removed (defect variant): the write does not check the generation.
+        "export class SqliteJournalStore {\n  updateRun() {\n    // UPDATE runs SET ... WHERE run_id = ?\n  }\n}\n"
+    };
+    fs::write(dir.join("src/stores/sqlite.ts"), impl_src).unwrap();
+    // The fencing test (TESTED signal: FENCED/fenced) present only when
+    // with_fencing_test.
+    let test_src = if with_fencing_test {
+        "import { expect, it } from 'vitest';\nit('rejects a fenced terminal write', async () => {\n  await expect(store.updateRun(id, {}, staleGen)).rejects.toSatisfy(isFenced);\n});\n"
+    } else {
+        // Green suite but no fencing assertion exercised.
+        "import { it, expect } from 'vitest';\nit('creates a run', async () => {\n  expect(await store.createRun({})).toBeDefined();\n});\n"
+    };
+    fs::write(dir.join("tests/stores/claim-recovery.test.ts"), test_src).unwrap();
+}
+
+/// AC-6 healthy baseline: declared + implemented + fencing test present. Under
+/// Option A the property is UNVERIFIED (honest ceiling), the FailureRecovery gate
+/// stays UNKNOWN (never PASS from this property), and the coverage records the
+/// property's evidence state — with no spurious "missing"/"broken" claim.
+#[test]
+fn fencing_property_healthy_is_unverified_not_pass() {
+    let dir = tempdir().unwrap();
+    write_store_project(dir.path(), true, true);
+    let ws = tempdir().unwrap();
+    let mut a = args_with_workspace(dir.path().to_path_buf(), ws.path());
+    a.profile = Some(ProfileArg::StatefulDistributed);
+    a.assume_yes = true;
+    let out = run_audit(a).expect("audit runs");
+
+    let fr = out
+        .report
+        .gates
+        .iter()
+        .find(|g| g.name == GateName::FailureRecovery)
+        .expect("FailureRecovery gate present");
+    // UNVERIFIED ⇒ the gate is never PASS from this property (C5).
+    assert_ne!(
+        fr.state,
+        GateState::Pass,
+        "fencing property must not drive PASS"
+    );
+    assert_eq!(
+        fr.state,
+        GateState::Unknown,
+        "UNVERIFIED ⇒ gate stays UNKNOWN"
+    );
+    assert!(
+        fr.rationale.contains("fencing invariant audited"),
+        "gate rationale records the property audit; got {:?}",
+        fr.rationale
+    );
+
+    // The property's evidence state is recorded as a coverage limitation, and it
+    // honestly says UNVERIFIED (declared+implemented+tested, suite not proven to
+    // exercise it).
+    let note = out
+        .report
+        .coverage
+        .known_limitations
+        .iter()
+        .find(|l| l.contains("fencing"))
+        .expect("fencing property recorded in coverage");
+    assert!(
+        note.contains("UNVERIFIED"),
+        "healthy baseline is UNVERIFIED; got {note}"
+    );
+    assert!(
+        note.contains("SPECIFIED") && note.contains("IMPLEMENTED") && note.contains("TESTED"),
+        "all three static facets reported; got {note}"
+    );
+
+    // No finding is published for an UNVERIFIED property (CONF-2).
+    assert!(
+        out.report.findings.is_empty(),
+        "no published finding under Option A"
+    );
+}
+
+/// AC-7 defect variant: the CAS guard is removed from the implementation. The
+/// IMPLEMENTED facet drops; the property remains UNVERIFIED and never PASS, and
+/// the report states the guard was not found in the inspected implementation.
+#[test]
+fn fencing_property_guard_removed_drops_implemented_facet() {
+    let dir = tempdir().unwrap();
+    write_store_project(dir.path(), false, true); // guard removed, test present
+    let ws = tempdir().unwrap();
+    let mut a = args_with_workspace(dir.path().to_path_buf(), ws.path());
+    a.profile = Some(ProfileArg::StatefulDistributed);
+    a.assume_yes = true;
+    let out = run_audit(a).expect("audit runs");
+
+    let note = out
+        .report
+        .coverage
+        .known_limitations
+        .iter()
+        .find(|l| l.contains("fencing"))
+        .expect("fencing property recorded");
+    assert!(
+        note.contains("UNVERIFIED"),
+        "guard-removed ⇒ UNVERIFIED; got {note}"
+    );
+    assert!(
+        !note.contains("IMPLEMENTED"),
+        "the guard is absent ⇒ no IMPLEMENTED facet; got {note}"
+    );
+    let fr = out
+        .report
+        .gates
+        .iter()
+        .find(|g| g.name == GateName::FailureRecovery)
+        .unwrap();
+    assert_ne!(fr.state, GateState::Pass);
+}
+
+/// AC-8 green-suite / not-exercised: the fencing assertion is absent (the suite
+/// is otherwise green). The TESTED facet drops; a green suite never verifies the
+/// property — it stays UNVERIFIED and never PASS.
+#[test]
+fn fencing_property_green_suite_without_fencing_test_is_unverified() {
+    let dir = tempdir().unwrap();
+    write_store_project(dir.path(), true, false); // guard present, no fencing test
+    let ws = tempdir().unwrap();
+    let mut a = args_with_workspace(dir.path().to_path_buf(), ws.path());
+    a.profile = Some(ProfileArg::StatefulDistributed);
+    a.assume_yes = true;
+    let out = run_audit(a).expect("audit runs");
+
+    let note = out
+        .report
+        .coverage
+        .known_limitations
+        .iter()
+        .find(|l| l.contains("fencing"))
+        .expect("fencing property recorded");
+    assert!(
+        note.contains("UNVERIFIED"),
+        "no fencing test ⇒ UNVERIFIED; got {note}"
+    );
+    assert!(
+        !note.contains("TESTED"),
+        "no fencing assertion ⇒ no TESTED facet; got {note}"
+    );
+    let fr = out
+        .report
+        .gates
+        .iter()
+        .find(|g| g.name == GateName::FailureRecovery)
+        .unwrap();
+    assert_ne!(
+        fr.state,
+        GateState::Pass,
+        "a green suite never verifies the property"
+    );
+}
+
+/// A non-store project (no src/stores/interface.ts) ⇒ the property audit is a
+/// no-op: no fencing coverage note, and the FailureRecovery gate is untouched by
+/// this slice (stays UNKNOWN from the base assembly).
+#[test]
+fn fencing_property_absent_on_non_store_project() {
+    let dir = library_project(); // a Cargo lib; no src/stores
+    let ws = tempdir().unwrap();
+    let mut a = args_with_workspace(dir.path().to_path_buf(), ws.path());
+    a.assume_yes = true;
+    let out = run_audit(a).expect("audit runs");
+    assert!(
+        !out.report
+            .coverage
+            .known_limitations
+            .iter()
+            .any(|l| l.contains("fencing")),
+        "no fencing audit on a non-store project"
+    );
+}
