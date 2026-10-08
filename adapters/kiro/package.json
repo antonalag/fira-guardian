@@ -1,0 +1,19 @@
+{
+  "name": "@fira-guardian/kiro-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "description": "FIRA Guardian Kiro host shim (Task 13): a thin TypeScript adapter that invokes the Rust fira-guardian CLI as a local subprocess over the TRANSPORT-1 CLI contract. No audit logic; no network.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
