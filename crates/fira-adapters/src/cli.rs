@@ -14,10 +14,13 @@ use fira_core::coverage::{AuditedArea, CoverageStatement, ExecutedMechanism, Ski
 use fira_core::execution::{ExecutionResult, VerificationMechanism};
 use fira_core::gate::Gate;
 use fira_core::gate_eval::{evaluate_execution_backed_gates, ExecutedMechanismResult};
-use fira_core::interfaces::CommandExecutor;
-use fira_core::model::CoverageResult;
+use fira_core::interfaces::{CommandExecutor, RepositoryReader};
+use fira_core::model::{CoverageResult, ExecutionOutcome};
 use fira_core::model::{
     Depth, GateCause, GateName, GateState, HumanDecisionFiraState, ProfileId, RequirementLevel,
+};
+use fira_core::property_audit::{
+    classify_fencing, FencingAssessment, FencingEvidence, PropertyExercised, FENCING_GATE,
 };
 use fira_core::report::{AppliedProfile, AppliedProfileGate, AuditReport};
 use fira_core::request::AuditRequest;
@@ -270,6 +273,27 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
             *slot = ev;
         }
     }
+
+    // Single-property semantic audit (one targeted property: the JournalStore
+    // recovery-generation fencing invariant). P2 reads the targeted source via
+    // the READ capability; CORE classifies the evidence on the §3 facet ladder.
+    // Under the approved Option A, FIRA cannot independently demonstrate that the
+    // specific fencing behavior was *exercised* by the executed test mechanism,
+    // so the honest ceiling is UNVERIFIED even when the suite PASSED — a passing
+    // suite is not proof of this property (C5/C6/VR11). The FailureRecovery gate
+    // therefore stays UNKNOWN (never PASS from this property), and the property's
+    // evidence state is recorded as a coverage limitation (C11). No finding is
+    // published (an UNVERIFIED property has no SUFFICIENT execution evidence —
+    // CONF-2), so `findings` stays empty.
+    let fencing = audit_fencing_property(&reader, npm_test_passed(&executed_results));
+    if let Some(assessment) = &fencing {
+        if let Some(slot) = gates.iter_mut().find(|g| g.name == FENCING_GATE) {
+            // Record the property's evidence state on the gate's rationale; the
+            // state remains UNKNOWN (UNVERIFIED ⇒ never PASS, C5).
+            slot.rationale = format!("fencing invariant audited: {}", assessment.rationale);
+        }
+    }
+
     let findings = Vec::new();
 
     let recomputed = compute_assessment(&gates, &findings, &ExpectationViolations::none());
@@ -287,7 +311,15 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
             .unwrap_or(HumanDecisionFiraState::Pending),
     };
 
-    let coverage = build_coverage(&gates, executed, mechanism_limitations);
+    let mut coverage_limitations = mechanism_limitations;
+    if let Some(assessment) = &fencing {
+        coverage_limitations.push(format!(
+            "property audit — {}: {}",
+            fira_core::property_audit::FENCING_PROPERTY_TITLE,
+            assessment.rationale
+        ));
+    }
+    let coverage = build_coverage(&gates, executed, coverage_limitations);
 
     let report = AuditReport {
         schema_version: "1.0.0".to_string(),
@@ -400,6 +432,72 @@ fn settle_selection(
             }
         }
     }
+}
+
+/// Whether the canonical `npm-test` mechanism executed and PASSED (level 4 — the
+/// mechanism-OBSERVED fact). This is NOT, on its own, evidence for the fencing
+/// property (that would be the forbidden inference); it is passed to the CORE
+/// classifier only as the honest "the suite ran and passed" input.
+fn npm_test_passed(executed: &[(VerificationMechanism, ExecutionResult)]) -> bool {
+    executed
+        .iter()
+        .any(|(m, r)| m.id.0 == "npm-test" && r.outcome == ExecutionOutcome::Passed)
+}
+
+/// P2/P3/P6 for the one targeted property (the JournalStore recovery-generation
+/// fencing invariant). Reads the targeted source via the READ capability only
+/// (no narrative, no project write), detects conservative presence signals, and
+/// classifies them with the pure CORE classifier. Returns `None` when the
+/// project is not store-shaped (the targeted interface file is absent), so the
+/// audit is a no-op on unrelated projects.
+///
+/// Option A: `exercised` is always `NotEstablished` — FIRA has no grounded way
+/// (without captured-output parsing, which is out of scope) to show the specific
+/// fencing behavior ran, so the property's ceiling is UNVERIFIED even when the
+/// test mechanism PASSED. Nothing here parses command output or matches test
+/// names.
+fn audit_fencing_property(
+    reader: &FsRepositoryReader,
+    mechanism_passed: bool,
+) -> Option<FencingAssessment> {
+    // The targeted store interface. Its absence ⇒ not a store-shaped project ⇒
+    // this property does not apply here (no-op).
+    let interface = reader.read_file("src/stores/interface.ts", None).ok()?;
+
+    // Level 1 (SPECIFIED): the interface declares the fencing contract. The
+    // guarantee is extracted from the code's own contract (C3), via conservative
+    // enumerated signals (the `expectedGeneration` parameter + the FENCED
+    // rejection the contract names).
+    let specified_in_interface =
+        interface.contains("expectedGeneration") && interface.contains("FENCED");
+
+    // Level 2 (IMPLEMENTED): a mutating write in the implementation guards on the
+    // persisted recovery_generation (the CAS predicate). Read-only; absence is
+    // recorded honestly (defect-variant signal).
+    let implemented_guard_present = reader
+        .read_file("src/stores/sqlite.ts", None)
+        .ok()
+        .map(|impl_src| impl_src.contains("recovery_generation"))
+        .unwrap_or(false);
+
+    // Level 3 (TESTED, static): a test body appears to assert stale-generation
+    // rejection (a fenced write is rejected). Reading test code is permitted
+    // static evidence; it is TESTED-not-executed (never VERIFIED on its own).
+    let tested_rejection_present = reader
+        .read_file("tests/stores/claim-recovery.test.ts", None)
+        .ok()
+        .map(|test_src| test_src.contains("FENCED") || test_src.contains("fenced"))
+        .unwrap_or(false);
+
+    let evidence = FencingEvidence {
+        specified_in_interface,
+        implemented_guard_present,
+        tested_rejection_present,
+        mechanism_passed,
+        // Option A: never established (no captured-output parsing, by ruling).
+        exercised: PropertyExercised::NotEstablished,
+    };
+    Some(classify_fencing(&evidence))
 }
 
 /// Record each profile gate at its honest "not yet interpreted" state: UNKNOWN
