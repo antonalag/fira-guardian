@@ -45,6 +45,42 @@ fn discovers_makefile_targets() {
     assert!(!ids.contains(&"make-VAR")); // assignment ignored
 }
 
+/// Colon-adjacent variable assignments (`:=`, `::=`, `:::=`) are not targets:
+/// the first colon belongs to the assignment operator, so these lines must not
+/// be emitted as executable mechanisms. Genuine `name:` / `name: deps` targets
+/// on neighboring lines remain discoverable.
+#[test]
+fn makefile_variable_assignments_are_not_targets() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("Makefile"),
+        concat!(
+            "COMPOSE_FILE := docker-compose.yml\n",
+            "BOOTSTRAP ::= scripts/bootstrap.sh\n",
+            "E2E_COMPOSE :::= compose.e2e.yml\n",
+            "SEED_SCRIPT := scripts/seed.sh\n",
+            "build: deps\n",
+            "\techo building\n",
+            "test:\n",
+            "\techo testing\n",
+        ),
+    )
+    .unwrap();
+
+    let found = discover(dir.path());
+    let ids: Vec<&str> = found.iter().map(|m| m.mechanism.id.0.as_str()).collect();
+
+    // Genuine targets survive.
+    assert!(ids.contains(&"make-build"));
+    assert!(ids.contains(&"make-test"));
+
+    // Phantom mechanisms from `:=` / `::=` / `:::=` assignments are absent.
+    assert!(!ids.contains(&"make-COMPOSE_FILE"));
+    assert!(!ids.contains(&"make-BOOTSTRAP"));
+    assert!(!ids.contains(&"make-E2E_COMPOSE"));
+    assert!(!ids.contains(&"make-SEED_SCRIPT"));
+}
+
 /// EXEC-1: `run_existing` rejects an id not in the discovered registry
 /// (a synthesized command is refused).
 #[test]

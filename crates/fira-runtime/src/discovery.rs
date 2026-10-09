@@ -318,9 +318,18 @@ fn discover_makefile(root: &Path, out: &mut Vec<DiscoveredMechanism>) {
         if line.starts_with(char::is_whitespace) {
             continue;
         }
-        let Some((lhs, _)) = line.split_once(':') else {
+        let Some((lhs, rhs)) = line.split_once(':') else {
             continue;
         };
+        // A colon-adjacent assignment operator (`:=`, `::=`, `:::=`) means the
+        // first colon belongs to a GNU-make variable assignment, not a target
+        // rule — the text after the matched colon is a run of zero or more extra
+        // colons followed by `=`. Such lines (`NAME := value`) must not be
+        // emitted as executable mechanisms. Non-colon assignments (`=`, `+=`,
+        // `?=`) have no colon and are already skipped by `split_once` above.
+        if rhs.trim_start_matches(':').starts_with('=') {
+            continue;
+        }
         let target = lhs.trim();
         if target.is_empty()
             || target.contains('=')
