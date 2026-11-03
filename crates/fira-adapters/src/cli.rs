@@ -22,9 +22,9 @@ use fira_core::model::{
 use fira_core::property_audit::{
     classify_fencing, FencingAssessment, FencingEvidence, PropertyExercised, FENCING_GATE,
 };
+use fira_core::provenance::{assess_with_inputs_hash, format_utc_timestamp};
 use fira_core::report::{AppliedProfile, AppliedProfileGate, AuditReport};
 use fira_core::request::AuditRequest;
-use fira_core::verdict::{compute_assessment, ExpectationViolations};
 
 use fira_core::interfaces::AuditContextProvider;
 
@@ -136,6 +136,9 @@ pub enum AdapterError {
     WorkspaceUnresolved(String),
     /// Persisting the canonical report to the audit workspace failed (WS-1).
     Persist(String),
+    /// The report's provenance (`created_at` / `determinism_inputs_hash`)
+    /// could not be established; no fabricated value is emitted.
+    Provenance(String),
 }
 
 impl core::fmt::Display for AdapterError {
@@ -153,6 +156,7 @@ impl core::fmt::Display for AdapterError {
             AdapterError::Output(e) => write!(f, "{e}"),
             AdapterError::WorkspaceUnresolved(e) => write!(f, "{e}"),
             AdapterError::Persist(e) => write!(f, "failed to persist report to audit workspace: {e}"),
+            AdapterError::Provenance(e) => write!(f, "failed to establish report provenance: {e}"),
         }
     }
 }
@@ -319,7 +323,11 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
 
     let findings = Vec::new();
 
-    let recomputed = compute_assessment(&gates, &findings, &ExpectationViolations::none());
+    // Single CORE entry point: the same gates, findings and (empty) expectation
+    // set feed both the unchanged verdict engine and `determinism_inputs_hash`
+    // (report-provenance-slice R2.3). `&[]` ≡ `ExpectationViolations::none()`.
+    let (recomputed, determinism_inputs_hash) = assess_with_inputs_hash(&gates, &findings, &[])
+        .map_err(|e| AdapterError::Provenance(e.to_string()))?;
     let technical_assessment = TechnicalAssessment {
         result: recomputed.result,
         blocking_findings: recomputed.blocking_findings,
@@ -344,10 +352,16 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
     }
     let coverage = build_coverage(&gates, executed, coverage_limitations);
 
+    // The report-assembly instant (R1.1): the only clock read for provenance,
+    // in the ADAPTER (CORE only formats). A clock failure aborts the run before
+    // persistence; no timestamp is fabricated (R1.4).
+    let created_at =
+        created_at_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH))?;
+
     let report = AuditReport {
         schema_version: "1.0.0".to_string(),
         audit_id: request.audit_id.clone().unwrap_or_default(),
-        created_at: "1970-01-01T00:00:00Z".to_string(),
+        created_at,
         request: request.clone(),
         applied_profile: AppliedProfile {
             profile_id: profile.profile_id,
@@ -375,7 +389,7 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
         technical_assessment,
         human_decision,
         prior_report_ref: None,
-        determinism_inputs_hash: String::new(),
+        determinism_inputs_hash,
     };
 
     // Persist the canonical report to the external audit workspace (WS-1) by
@@ -418,6 +432,20 @@ fn audit_nonce() -> String {
         .unwrap_or(0);
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("{nanos:x}-{seq:x}")
+}
+
+/// Pure conversion of a since-epoch clock reading into the S11 `created_at`
+/// string (design §6). The caller supplies the reading, so this is testable
+/// without a clock. Pre-epoch readings and instants beyond year 9999 are errors
+/// (R1.4); no timestamp is fabricated.
+fn created_at_from(
+    since_epoch: Result<std::time::Duration, std::time::SystemTimeError>,
+) -> Result<String, AdapterError> {
+    let elapsed = since_epoch.map_err(|_| {
+        AdapterError::Provenance("system clock is before the Unix epoch".to_string())
+    })?;
+    format_utc_timestamp(elapsed.as_secs())
+        .ok_or_else(|| AdapterError::Provenance("system clock is beyond year 9999".to_string()))
 }
 
 /// Apply the exact §9.4 confirm semantics.
@@ -635,4 +663,45 @@ pub fn write_output(
     let sink = OutputSink::new(project_root).map_err(|e| AdapterError::Output(e.to_string()))?;
     sink.write(requested, bytes)
         .map_err(|e| AdapterError::Output(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{created_at_from, AdapterError};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    /// AC-9: sub-second part truncated; fixed input, no clock read.
+    #[test]
+    fn created_at_from_formats_fixed_duration() {
+        let d = Duration::from_secs(1_767_225_599) + Duration::from_millis(999);
+        assert_eq!(created_at_from(Ok(d)).unwrap(), "2025-12-31T23:59:59Z");
+    }
+
+    /// AC-9: a pre-epoch reading is an explicit provenance error. The error is
+    /// built deterministically from two fixed instants (no clock read).
+    #[test]
+    fn created_at_from_rejects_pre_epoch() {
+        let pre_epoch = UNIX_EPOCH.duration_since(UNIX_EPOCH + Duration::from_secs(1));
+        assert!(pre_epoch.is_err(), "fixture must be a pre-epoch error");
+        assert!(matches!(
+            created_at_from(pre_epoch),
+            Err(AdapterError::Provenance(_))
+        ));
+    }
+
+    /// AC-9: an instant beyond year 9999 is an explicit provenance error.
+    #[test]
+    fn created_at_from_rejects_beyond_year_9999() {
+        assert!(matches!(
+            created_at_from(Ok(Duration::from_secs(253_402_300_800))),
+            Err(AdapterError::Provenance(_))
+        ));
+    }
+
+    /// The new variant's Display text (design §6).
+    #[test]
+    fn provenance_error_display() {
+        let e = AdapterError::Provenance("x".to_string());
+        assert_eq!(e.to_string(), "failed to establish report provenance: x");
+    }
 }
