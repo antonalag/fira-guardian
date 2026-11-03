@@ -715,3 +715,146 @@ fn failed_mechanisms_create_no_findings() {
         "a failure must not create a finding"
     );
 }
+
+// ---- report-provenance-slice Task 6: created_at + determinism_inputs_hash ----
+
+/// A Makefile whose backing `build` passes and backing `test` fails (the
+/// `failing_test_mechanism_yields_fail_gate` shape). Local to the provenance
+/// tests; existing helpers are unchanged.
+fn failing_test_makefile_project() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("Makefile"),
+        "build:\n\ttrue\ntest:\n\tfalse\n",
+    )
+    .unwrap();
+    dir
+}
+
+/// Run a `--profile cli-tool` audit on `project` into a fresh temp workspace.
+fn run_cli_tool_audit(project: &Path) -> (fira_adapters::cli::AuditOutput, tempfile::TempDir) {
+    let ws = tempdir().unwrap();
+    let mut a = args_with_workspace(project.to_path_buf(), ws.path());
+    a.profile = Some(ProfileArg::CliTool);
+    let out = run_audit(a).expect("audit runs");
+    (out, ws)
+}
+
+/// AC-3: hand-written prefix / length / character-set check (no regex).
+fn assert_hash_format(h: &str) {
+    assert!(h.starts_with("sha256:"), "missing prefix: {h}");
+    assert_eq!(h.len(), 71, "wrong length: {h}");
+    assert!(
+        h.as_bytes()[7..]
+            .iter()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b)),
+        "non-lowercase-hex digest: {h}"
+    );
+}
+
+/// AC-9 (e2e part): `created_at` is structurally `YYYY-MM-DDTHH:MM:SSZ`, checked
+/// by hand (no regex). Asserts nothing about the clock's value.
+fn assert_created_at_format(s: &str) {
+    let b = s.as_bytes();
+    assert_eq!(b.len(), 20, "wrong length: {s}");
+    for (i, c) in b.iter().enumerate() {
+        match i {
+            4 | 7 => assert_eq!(*c, b'-', "byte {i} of {s}"),
+            10 => assert_eq!(*c, b'T', "byte {i} of {s}"),
+            13 | 16 => assert_eq!(*c, b':', "byte {i} of {s}"),
+            19 => assert_eq!(*c, b'Z', "byte {i} of {s}"),
+            _ => assert!(c.is_ascii_digit(), "byte {i} of {s} is not a digit"),
+        }
+    }
+}
+
+/// AC-9 (e2e) + AC-10: the produced report carries a structurally valid
+/// `created_at` and a `fira-dih/1` hash that is recomputable from the report's
+/// own gates + findings (empty expectations, R3.2) and is persisted verbatim.
+#[test]
+fn provenance_fields_are_populated_and_recomputable() {
+    use fira_core::provenance::determinism_inputs_hash;
+
+    let dir = makefile_project(false);
+    let (out, _ws) = run_cli_tool_audit(dir.path());
+
+    assert_created_at_format(&out.report.created_at);
+
+    let h = &out.report.determinism_inputs_hash;
+    assert_hash_format(h);
+    let recomputed = determinism_inputs_hash(&out.report.gates, &out.report.findings, &[])
+        .expect("report inputs are hashable");
+    assert_eq!(h, &recomputed, "hash must be recomputable from the report");
+
+    let json_path = PathBuf::from(&out.canonical_location).join("report.json");
+    let text = fs::read_to_string(&json_path).expect("persisted report.json");
+    assert!(
+        text.contains(h.as_str()),
+        "persisted report.json must contain the exact hash"
+    );
+    assert!(
+        text.contains(out.report.created_at.as_str()),
+        "persisted report.json must contain the exact created_at"
+    );
+}
+
+/// AC-6: two runs on the same unchanged project produce distinct audit ids (the
+/// id is not a hash input) and identical hashes.
+#[test]
+fn unchanged_project_reaudit_yields_identical_hash() {
+    let dir = makefile_project(false);
+    let (first, _ws1) = run_cli_tool_audit(dir.path());
+    let (second, _ws2) = run_cli_tool_audit(dir.path());
+
+    assert_ne!(first.report.audit_id, second.report.audit_id);
+    assert_eq!(
+        first.report.determinism_inputs_hash,
+        second.report.determinism_inputs_hash
+    );
+}
+
+/// AC-11 (a): a failing backing `test` target changes the Tests gate, which is a
+/// verdict input, so the hash changes.
+#[test]
+fn backing_test_outcome_changes_hash() {
+    let passing = makefile_project(false);
+    let failing = failing_test_makefile_project();
+    let (pass_out, _ws1) = run_cli_tool_audit(passing.path());
+    let (fail_out, _ws2) = run_cli_tool_audit(failing.path());
+
+    let tests_state = |out: &fira_adapters::cli::AuditOutput| {
+        out.report
+            .gates
+            .iter()
+            .find(|g| g.name == GateName::Tests)
+            .map(|g| g.state)
+    };
+    assert_eq!(tests_state(&pass_out), Some(GateState::Pass));
+    assert_eq!(tests_state(&fail_out), Some(GateState::Fail));
+    assert_ne!(
+        pass_out.report.determinism_inputs_hash,
+        fail_out.report.determinism_inputs_hash
+    );
+}
+
+/// AC-11 (b): extra failing non-backing targets change only coverage
+/// limitations, not the verdict inputs, so the hash is unchanged.
+#[test]
+fn non_backing_failures_do_not_change_hash() {
+    let clean = makefile_project(false);
+    let with_failing = makefile_project(true);
+    let (clean_out, _ws1) = run_cli_tool_audit(clean.path());
+    let (failing_out, _ws2) = run_cli_tool_audit(with_failing.path());
+
+    // The two reports really differ outside the hashed inputs…
+    assert_ne!(
+        clean_out.report.coverage.known_limitations,
+        failing_out.report.coverage.known_limitations
+    );
+    // …but their verdict inputs, and therefore their hashes, are identical.
+    assert_eq!(clean_out.report.gates, failing_out.report.gates);
+    assert_eq!(
+        clean_out.report.determinism_inputs_hash,
+        failing_out.report.determinism_inputs_hash
+    );
+}

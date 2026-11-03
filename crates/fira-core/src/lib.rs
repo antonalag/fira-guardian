@@ -103,6 +103,11 @@ pub mod gate_eval;
 /// extraction framework.
 pub mod property_audit;
 
+/// Report provenance (S11 `determinism_inputs_hash` / `created_at`): pure
+/// canonicalization and hashing of the verdict-engine inputs (`fira-dih/1`).
+/// No clock, FS, process or network access; the clock is read by the adapter.
+pub mod provenance;
+
 #[cfg(test)]
 mod contract_version_test {
     use super::CONTRACT_VERSION;

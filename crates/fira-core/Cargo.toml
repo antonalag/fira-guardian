@@ -17,6 +17,11 @@ description = "FIRA Guardian CORE — platform-independent audit domain. No sibl
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# sha2 (RustCrypto) computes the SHA-256 for `determinism_inputs_hash`
+# (report-provenance-slice). Pure computation: no filesystem, process, or
+# network capability, so CORE's platform independence is preserved. Chosen over
+# a custom implementation to avoid maintaining cryptographic code.
+sha2 = { version = "0.10", default-features = false }
 
 [dev-dependencies]
 toml = "0.8"
