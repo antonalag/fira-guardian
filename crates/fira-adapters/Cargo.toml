@@ -13,6 +13,12 @@ fira-runtime = { path = "../fira-runtime" }
 fira-presentation = { path = "../fira-presentation" }
 # Shared CLI arg types used by run_audit (the binary delegates parsing here).
 clap = { version = "4.5", features = ["derive"] }
+# serde_json serializes the assembled AuditReport to a serde_json::Value so the
+# CORE validators (run_vrs, ConfidenceRubric, VerdictEngine), which take
+# &serde_json::Value, can run over the real report in run_audit
+# (vr-enforcement-wiring-slice). Pure data library; already in the tree via
+# fira-core, so no new lockfile package.
+serde_json = "1"
 
 [dev-dependencies]
 # End-to-end CLI tests on a throwaway project tree (test-only).

@@ -26,6 +26,10 @@ use fira_core::provenance::{assess_with_inputs_hash, format_utc_timestamp};
 use fira_core::report::{AppliedProfile, AppliedProfileGate, AuditReport};
 use fira_core::request::AuditRequest;
 
+use fira_core::confidence::ConfidenceRubric;
+use fira_core::validation::{run_vrs, RecomputeHook, StaticValidationContext, Violation};
+use fira_core::verdict::VerdictEngine;
+
 use fira_core::interfaces::AuditContextProvider;
 
 use fira_policy::{confirm_gate_view, profile_for, AppliedSelection, ConfirmGateView};
@@ -139,6 +143,14 @@ pub enum AdapterError {
     /// The report's provenance (`created_at` / `determinism_inputs_hash`)
     /// could not be established; no fabricated value is emitted.
     Provenance(String),
+    /// The assembled report was persisted (diagnostic evidence preserved) but
+    /// failed one or more VR validation checks (`run_vrs` / VR5 / VR7). Carries
+    /// the canonical persisted location and every collected violation, in the
+    /// order they were produced (no cap, no truncation — D-12).
+    VrViolations {
+        report_location: String,
+        violations: Vec<Violation>,
+    },
 }
 
 impl core::fmt::Display for AdapterError {
@@ -157,6 +169,22 @@ impl core::fmt::Display for AdapterError {
             AdapterError::WorkspaceUnresolved(e) => write!(f, "{e}"),
             AdapterError::Persist(e) => write!(f, "failed to persist report to audit workspace: {e}"),
             AdapterError::Provenance(e) => write!(f, "failed to establish report provenance: {e}"),
+            AdapterError::VrViolations {
+                report_location,
+                violations,
+            } => {
+                write!(
+                    f,
+                    "VR validation failed for the persisted report at {report_location}: {} violation(s)",
+                    violations.len()
+                )?;
+                for v in violations {
+                    // Reuse `Violation`'s own Display (VR id, locator, detail);
+                    // every violation is listed (D-12), not just the first.
+                    write!(f, "\n  - {v}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -412,12 +440,45 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
         .persist_report(&report)
         .map_err(|e| AdapterError::Persist(e.to_string()))?;
 
+    // Validate the persisted report (vr-enforcement-wiring-slice R1/R3). The
+    // report is already written (diagnostic evidence preserved, R3.1); a
+    // violation is a fatal adapter error carrying the persisted location and
+    // every collected violation (D-11/D-12). On Err the CLI never renders the
+    // report (R2.3).
+    let violations = validate_report(&report);
+    if !violations.is_empty() {
+        return Err(AdapterError::VrViolations {
+            report_location: location.0.clone(),
+            violations,
+        });
+    }
+
     Ok(AuditOutput {
         applied,
         view,
         report,
         canonical_location: location.0,
     })
+}
+
+/// Run the CORE validators over the assembled report and collect every
+/// violation (vr-enforcement-wiring-slice, design §5). Pure: it serializes the
+/// report to a `serde_json::Value`, builds the context from it, runs `run_vrs`,
+/// VR5 (`ConfidenceRubric`) and VR7 (`VerdictEngine`) in that order, and returns
+/// the concatenated violations. It reads no clock, performs no I/O, mutates
+/// nothing, and does not know where the report was persisted — mapping the
+/// result onto an [`AdapterError`] (with the persisted location) is the caller's
+/// job. An empty result means the report passes every wired check.
+fn validate_report(report: &AuditReport) -> Vec<Violation> {
+    // Serialization cannot fail for this fully-owned, serde-derived type (same
+    // precondition PRESENTATION relies on in `render_json`).
+    let value = serde_json::to_value(report).expect("AuditReport serializes to a JSON value");
+
+    let ctx = StaticValidationContext::from_report(&value);
+    let mut violations = run_vrs(&value, &ctx);
+    violations.extend(ConfidenceRubric.recompute_confidence(&value));
+    violations.extend(VerdictEngine.recompute_verdict(&value));
+    violations
 }
 
 /// A `std::time`-derived token used to make each run's `audit_id` distinct by
@@ -667,7 +728,13 @@ pub fn write_output(
 
 #[cfg(test)]
 mod tests {
-    use super::{created_at_from, AdapterError};
+    use super::{
+        created_at_from, validate_report, AdapterAuditContextProvider, AdapterError,
+        AuditContextProvider, AuditReport, Violation,
+    };
+    use fira_core::validation::Vr;
+    use serde_json::{json, Value};
+    use std::path::PathBuf;
     use std::time::{Duration, UNIX_EPOCH};
 
     /// AC-9: sub-second part truncated; fixed input, no clock read.
@@ -703,5 +770,438 @@ mod tests {
     fn provenance_error_display() {
         let e = AdapterError::Provenance("x".to_string());
         assert_eq!(e.to_string(), "failed to establish report provenance: x");
+    }
+
+    // ---------------------------------------------------------------------
+    // vr-enforcement-wiring-slice, Task 5 (AC-3, AC-4): `validate_report`
+    // detection and aggregation. A real `run_audit` report passes every wired
+    // rule, so violations are provoked on in-memory copies of the S11 golden.
+    // The golden is embedded read-only at compile time and is never written.
+    // ---------------------------------------------------------------------
+
+    const GOLDEN: &str = include_str!("../../../schemas/examples/valid/s11-audit-report.json");
+
+    fn golden_value() -> Value {
+        serde_json::from_str(GOLDEN).expect("golden S11 report parses as JSON")
+    }
+
+    /// Deserialize as `AuditReport` first (so a mutation that is not
+    /// structurally valid fails loudly instead of skipping the validators),
+    /// then run the function under test.
+    fn validate_value(value: Value) -> Vec<Violation> {
+        let report: AuditReport = serde_json::from_value(value)
+            .expect("mutated golden still deserializes as AuditReport");
+        validate_report(&report)
+    }
+
+    fn count_of(violations: &[Violation], vr: Vr) -> usize {
+        violations.iter().filter(|v| v.vr == vr).count()
+    }
+
+    /// VR8 mutation: the only gate (`Tests`) loses its coverage entry.
+    fn mutate_vr8(value: &mut Value) {
+        let areas = value["coverage"]["audited_areas"]
+            .as_array_mut()
+            .expect("golden has coverage.audited_areas");
+        let before = areas.len();
+        areas.retain(|a| a["area"].as_str() != Some("Tests"));
+        assert_eq!(
+            before - areas.len(),
+            1,
+            "mutation must remove the Tests entry"
+        );
+    }
+
+    /// VR5 mutation: the HIGH finding RR-001 loses its execution-based facet.
+    ///
+    /// Only `epistemic_state.facets` (OBSERVED removed) and
+    /// `epistemic_state.conclusion` (VERIFIED -> UNVERIFIED, so VR11 does not
+    /// also fire) change; `confidence` stays HIGH. `confidence_derivation` is
+    /// intentionally left stale ("execution-based facet present ...") because it
+    /// is a descriptive audit-trail string that no rule evaluates; editing it
+    /// would only widen the mutation without affecting what VR5 checks.
+    fn mutate_vr5(value: &mut Value) {
+        let finding = &mut value["findings"][0];
+        assert_eq!(finding["id"], "RR-001", "golden finding precondition");
+        assert_eq!(
+            finding["confidence"], "HIGH",
+            "golden confidence precondition"
+        );
+        assert!(
+            finding["epistemic_state"]["facets"]
+                .as_array()
+                .expect("facets array")
+                .iter()
+                .any(|f| f == "OBSERVED"),
+            "golden precondition: RR-001 carries OBSERVED"
+        );
+        finding["epistemic_state"]["facets"] = json!(["IMPLEMENTED", "TESTED"]);
+        finding["epistemic_state"]["conclusion"] = json!("UNVERIFIED");
+    }
+
+    /// VR7 mutation: the recorded result no longer matches the recomputation.
+    fn mutate_vr7(value: &mut Value) {
+        assert_eq!(
+            value["technical_assessment"]["result"], "READY",
+            "golden precondition: recorded result is READY"
+        );
+        value["technical_assessment"]["result"] = json!("NOT_READY");
+    }
+
+    /// Baseline: the unmodified golden passes every wired check.
+    #[test]
+    fn validate_report_golden_baseline_is_clean() {
+        let violations = validate_value(golden_value());
+        assert!(
+            violations.is_empty(),
+            "unexpected violations: {violations:?}"
+        );
+    }
+
+    /// AC-3a: `run_vrs` (VR8) is wired.
+    #[test]
+    fn validate_report_detects_vr8_gate_without_coverage() {
+        let mut value = golden_value();
+        mutate_vr8(&mut value);
+        let violations = validate_value(value);
+        assert_eq!(violations.len(), 1, "got: {violations:?}");
+        assert_eq!(violations[0].vr, Vr::Vr8);
+        assert_eq!(violations[0].locator, "gates[0]");
+    }
+
+    /// AC-3b: VR5 (`ConfidenceRubric`) is wired; the detail names the rubric
+    /// branch (`PublishableNonHigh`), so it is the HIGH-without-evidence
+    /// overclaim and not the NotPublishable branch.
+    #[test]
+    fn validate_report_detects_vr5_high_confidence_without_execution_facet() {
+        let mut value = golden_value();
+        mutate_vr5(&mut value);
+        let violations = validate_value(value);
+        assert_eq!(violations.len(), 1, "got: {violations:?}");
+        assert_eq!(violations[0].vr, Vr::Vr5);
+        assert_eq!(violations[0].locator, "findings[0]");
+        assert!(
+            violations[0].detail.contains("PublishableNonHigh"),
+            "detail: {}",
+            violations[0].detail
+        );
+    }
+
+    /// AC-3c: VR7 (`VerdictEngine`) is wired.
+    #[test]
+    fn validate_report_detects_vr7_recorded_result_mismatch() {
+        let mut value = golden_value();
+        mutate_vr7(&mut value);
+        let violations = validate_value(value);
+        assert_eq!(violations.len(), 1, "got: {violations:?}");
+        assert_eq!(violations[0].vr, Vr::Vr7);
+        assert_eq!(violations[0].locator, "technical_assessment.result");
+    }
+
+    /// AC-4: violations from `run_vrs` and VR7 are collected together. Presence
+    /// and total count only; no dependence on the order of the list.
+    #[test]
+    fn validate_report_accumulates_vr8_and_vr7() {
+        let mut value = golden_value();
+        mutate_vr8(&mut value);
+        mutate_vr7(&mut value);
+        let violations = validate_value(value);
+        assert_eq!(violations.len(), 2, "got: {violations:?}");
+        assert_eq!(count_of(&violations, Vr::Vr8), 1);
+        assert_eq!(count_of(&violations, Vr::Vr7), 1);
+    }
+
+    /// AC-4: all three wired sources (`run_vrs`, VR5, VR7) contribute to one
+    /// list. Presence and total count only.
+    #[test]
+    fn validate_report_accumulates_vr8_vr5_and_vr7() {
+        let mut value = golden_value();
+        mutate_vr8(&mut value);
+        mutate_vr5(&mut value);
+        mutate_vr7(&mut value);
+        let violations = validate_value(value);
+        assert_eq!(violations.len(), 3, "got: {violations:?}");
+        assert_eq!(count_of(&violations, Vr::Vr8), 1);
+        assert_eq!(count_of(&violations, Vr::Vr5), 1);
+        assert_eq!(count_of(&violations, Vr::Vr7), 1);
+    }
+
+    // ---------------------------------------------------------------------
+    // vr-enforcement-wiring-slice, Task 6 (AC-11): content of the
+    // `AdapterError::VrViolations` message. The variant is built directly, so
+    // no violating project is needed. The assertions are about literal content
+    // and about nothing being lost or duplicated; they deliberately do not pin
+    // the header wording, the bullet format or the order of the list.
+    // ---------------------------------------------------------------------
+
+    const REPORT_LOCATION: &str = "/tmp/fira audit ws/audit-v1-0123-0";
+
+    /// Struct literal: `Violation::new` is `pub(crate)` in fira-core, but the
+    /// fields are public.
+    fn violation(vr: Vr, locator: &str, detail: &str) -> Violation {
+        Violation {
+            vr,
+            locator: locator.to_string(),
+            detail: detail.to_string(),
+        }
+    }
+
+    /// The `Display` text of the error under test.
+    fn error_text(location: &str, violations: Vec<Violation>) -> String {
+        AdapterError::VrViolations {
+            report_location: location.to_string(),
+            violations,
+        }
+        .to_string()
+    }
+
+    /// Real violations produced by the Task 5 mutations: VR8 (`run_vrs`), VR5
+    /// and VR7.
+    fn triple_violations() -> Vec<Violation> {
+        let mut value = golden_value();
+        mutate_vr8(&mut value);
+        mutate_vr5(&mut value);
+        mutate_vr7(&mut value);
+        validate_value(value)
+    }
+
+    /// The violation's composed `Display` (id, locator and detail together)
+    /// appears exactly `times` times in `text`.
+    fn assert_composed_count(text: &str, v: &Violation, times: usize) {
+        assert_eq!(
+            text.matches(&v.to_string()).count(),
+            times,
+            "{} at {} should appear {times} time(s)",
+            v.vr.id(),
+            v.locator
+        );
+    }
+
+    /// AC-11 (a)(b)(c): the location, and every violation complete and listed
+    /// exactly once. The id is checked with `contains` only: a detail can
+    /// mention another id (the VR5 detail contains "VR5"), so counting ids would
+    /// be wrong; the composed string is what pins id, locator and detail
+    /// together.
+    #[test]
+    fn vr_violations_error_lists_location_and_every_violation() {
+        let violations = triple_violations();
+        // Guards: the input meets the AC-11 minimum (>= 3 violations, >= 2 ids).
+        assert!(violations.len() >= 3, "got: {violations:?}");
+        let mut ids: Vec<&str> = violations.iter().map(|v| v.vr.id()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert!(ids.len() >= 2, "got: {ids:?}");
+
+        let text = error_text(REPORT_LOCATION, violations.clone());
+
+        assert!(text.contains(REPORT_LOCATION), "location missing: {text}");
+        for v in &violations {
+            assert!(text.contains(v.vr.id()), "id missing for {v}");
+            assert!(text.contains(&v.locator), "locator missing for {v}");
+            assert!(text.contains(&v.detail), "detail missing for {v}");
+            assert_composed_count(&text, v, 1);
+        }
+    }
+
+    /// AC-11 (c), D-12: no cap on the number of violations. 100 is above the
+    /// usual limits (10, 20, 50); a cap of 100 or more would not be detected.
+    #[test]
+    fn vr_violations_error_has_no_violation_cap() {
+        const COUNT: usize = 100;
+        let ids = [
+            Vr::Vr1,
+            Vr::Vr2,
+            Vr::Vr5,
+            Vr::Vr7,
+            Vr::Vr8,
+            Vr::Vr9,
+            Vr::Vr11,
+            Vr::Vr12,
+            Vr::Vr13,
+        ];
+        // Fixed-width numbers, so no locator or detail is a substring of another.
+        let violations: Vec<Violation> = (0..COUNT)
+            .map(|i| {
+                violation(
+                    ids[i % ids.len()],
+                    &format!("findings[{i:03}]"),
+                    &format!("detail-{i:03}"),
+                )
+            })
+            .collect();
+        assert_eq!(violations.len(), COUNT);
+
+        let text = error_text(REPORT_LOCATION, violations.clone());
+
+        for v in &violations {
+            assert_eq!(
+                text.matches(&v.detail).count(),
+                1,
+                "detail of {} should be listed exactly once",
+                v.locator
+            );
+            assert_composed_count(&text, v, 1);
+        }
+    }
+
+    /// R2.1a: no deduplication. Two identical violations are both listed.
+    #[test]
+    fn vr_violations_error_does_not_deduplicate() {
+        let first = violation(
+            Vr::Vr8,
+            "gates[0]",
+            "gate `Tests` does not appear in any coverage entry",
+        );
+        let second = violation(
+            Vr::Vr8,
+            "gates[0]",
+            "gate `Tests` does not appear in any coverage entry",
+        );
+        let other = violation(
+            Vr::Vr7,
+            "technical_assessment.result",
+            "recorded result differs from recomputed",
+        );
+        assert_eq!(first, second, "guard: the two violations are identical");
+
+        let text = error_text(REPORT_LOCATION, vec![first.clone(), second, other.clone()]);
+
+        assert_composed_count(&text, &first, 2);
+        assert_composed_count(&text, &other, 1);
+    }
+
+    /// AC-11 (b): content is rendered verbatim, with nothing escaped or cut.
+    /// One list, one violation per kind of content, so a list cut to its first
+    /// element is detected too.
+    #[test]
+    fn vr_violations_error_preserves_content_verbatim() {
+        let long = format!("START-{}-END", "a".repeat(9_990));
+        assert_eq!(long.chars().count(), 10_000, "guard: detail length");
+        let violations = vec![
+            violation(Vr::Vr9, "findings[0].title", "ñandú → 検証 ✓ 🦀"),
+            violation(
+                Vr::Vr7,
+                "technical_assessment.result",
+                "line1\nline2\r\nline3\n",
+            ),
+            violation(
+                Vr::Vr5,
+                "findings[1]",
+                r#"double " single ' tick ` backslash \ and \n literal"#,
+            ),
+            violation(Vr::Vr1, "gates[2]", "{} {0} {name} {{x}} }{"),
+            violation(Vr::Vr2, "findings[3]", &long),
+        ];
+
+        let text = error_text(REPORT_LOCATION, violations.clone());
+
+        for v in &violations {
+            assert!(
+                text.contains(&v.detail),
+                "detail of {} altered or missing",
+                v.locator
+            );
+            assert_composed_count(&text, v, 1);
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // vr-enforcement-wiring-slice, Task 7 (AC-5, R3.1, R3.2): a report is
+    // persisted whether or not it violates a rule, and the persisted file is
+    // the exact report that was validated. The two calls are composed here, in
+    // the order `run_audit` uses (persist, then `validate_report`). These tests
+    // do NOT prove that `run_audit` itself keeps that order: a violating
+    // project cannot be driven through it, so the order is verified by code
+    // inspection (AC-1).
+    // ---------------------------------------------------------------------
+
+    /// A report persisted into throw-away directories. Both temp dirs are kept
+    /// alive here: they must exist and be disjoint for the workspace sink.
+    struct Persisted {
+        _project: tempfile::TempDir,
+        _workspace: tempfile::TempDir,
+        /// The canonical workspace base used by the provider.
+        base: PathBuf,
+        /// The location returned by `persist_report`.
+        dir: PathBuf,
+    }
+
+    /// Persist `report` through the same `AdapterAuditContextProvider` /
+    /// `persist_report` path `run_audit` uses. Persistence takes no part in
+    /// validation, so it must succeed for any report.
+    fn persist_in_temp_workspace(report: &AuditReport) -> Persisted {
+        let project = tempfile::tempdir().expect("project tempdir");
+        let workspace = tempfile::tempdir().expect("workspace tempdir");
+        let provider = AdapterAuditContextProvider::new(
+            report.request.clone(),
+            workspace.path(),
+            project.path(),
+        )
+        .expect("workspace is outside the project tree");
+        let location = provider
+            .persist_report(report)
+            .expect("report is persisted regardless of its validity");
+        Persisted {
+            base: provider.workspace_base().to_path_buf(),
+            dir: PathBuf::from(location.0),
+            _project: project,
+            _workspace: workspace,
+        }
+    }
+
+    /// Read `report.json` back from the persisted location and deserialize it
+    /// with the inverse of the renderer used to write it.
+    fn load_persisted(persisted: &Persisted) -> AuditReport {
+        let json = persisted.dir.join("report.json");
+        assert!(json.is_file(), "report.json missing at {}", json.display());
+        let text = std::fs::read_to_string(&json).expect("report.json is readable");
+        fira_presentation::parse_json(&text).expect("report.json deserializes as AuditReport")
+    }
+
+    /// AC-5, R3.1, R3.2: a report that violates a rule is still persisted, the
+    /// file is the exact report that was validated, and it reproduces the same
+    /// violations when validated again (so it is usable as diagnostic evidence).
+    #[test]
+    fn persisted_report_survives_vr_violations() {
+        let mut value = golden_value();
+        mutate_vr8(&mut value);
+        let report: AuditReport =
+            serde_json::from_value(value).expect("mutated golden deserializes as AuditReport");
+
+        // Persist first, validate after: the order `run_audit` uses.
+        let persisted = persist_in_temp_workspace(&report);
+        let violations = validate_report(&report);
+
+        // Guard: the input really violates a rule (exactly the VR8 mutation).
+        assert_eq!(violations.len(), 1, "got: {violations:?}");
+        assert_eq!(violations[0].vr, Vr::Vr8);
+
+        assert_eq!(persisted.dir, persisted.base.join(&report.audit_id));
+        let reloaded = load_persisted(&persisted);
+        assert_eq!(reloaded, report, "persisted report differs from validated");
+        assert_eq!(
+            validate_report(&reloaded),
+            violations,
+            "persisted report must reproduce the same violations"
+        );
+    }
+
+    /// AC-5 (clean case): a report with no violations is persisted in the same
+    /// way and the file is the exact report that was validated.
+    #[test]
+    fn persisted_clean_report_validates_clean() {
+        let report: AuditReport =
+            serde_json::from_value(golden_value()).expect("golden deserializes as AuditReport");
+
+        let persisted = persist_in_temp_workspace(&report);
+        let violations = validate_report(&report);
+
+        assert!(violations.is_empty(), "got: {violations:?}");
+        assert_eq!(persisted.dir, persisted.base.join(&report.audit_id));
+        assert_eq!(
+            load_persisted(&persisted),
+            report,
+            "persisted report differs from validated"
+        );
     }
 }
