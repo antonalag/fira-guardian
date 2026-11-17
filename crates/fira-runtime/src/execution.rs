@@ -7,21 +7,33 @@
 //! `std::process::Command` with the discovered **explicit argument vector**, no
 //! shell interpolation, and no network.
 //!
-//! Task 10 produces a **raw** `ExecutionResult` (outcome + captured output). The
-//! §6 outcome→epistemic/gate interpretation is deliberately **not** done here
-//! (deferred to later CORE orchestration).
+//! The executor produces a **raw** `ExecutionResult` (outcome + captured output).
+//! The §6 outcome→epistemic/gate interpretation is deliberately **not** done
+//! here (CORE `gate_eval`). The `(outcome, classification)` pair is, however,
+//! derived by the pure CORE function [`classify_run`] from normalized
+//! [`RunFacts`]: this layer only observes the operating system (exit status,
+//! `io::ErrorKind`, access to the project directory, launcher name) and
+//! translates it into those neutral facts. It never decides a classification by
+//! itself, and never reads captured output or error text to do so.
+//!
+//! A failure to *start* a declared mechanism is a result (`Ok(ERROR)` with the
+//! operating-system detail preserved in `blocking_condition`), not an `Err`.
+//! An unknown id and a registry integrity error remain `Err`.
 
 use std::collections::BTreeSet;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use fira_core::execution::{ExecutionResult, VerificationMechanism};
+use fira_core::failure_classification::{
+    classify_run, LauncherProvenance, RunFacts, StartFailure, StartFailureCause,
+};
 use fira_core::interfaces::{CapabilityError, CommandExecutor};
-use fira_core::model::{Capability, ExecutionOutcome, IdRef};
+use fira_core::model::{Capability, IdRef};
 
 use crate::discovery::{discover, DiscoveredMechanism};
 
@@ -125,25 +137,46 @@ impl CommandExecutor for ProjectCommandExecutor {
         // return a NOT_RUN result stating it was not executed and why. No command
         // is synthesized or rewritten (EXEC-1); nothing is marked PASS (C5).
         if let Some(reason) = &entry.non_terminating_reason {
-            return Ok(ExecutionResult {
-                command_id: entry.mechanism.id.clone(),
-                command: entry.mechanism.command.clone(),
-                outcome: ExecutionOutcome::NotRun,
-                classification: None,
-                blocking_condition: Some(format!(
+            return Ok(build_result(
+                entry,
+                &RunFacts::NotExecuted,
+                Some(format!(
                     "declared command is a non-terminating {reason}; not executed for \
                      verification (would not terminate on its own)"
                 )),
-                captured_output: String::new(),
-                exercised_behaviors: Vec::new(),
-            });
+                String::new(),
+            ));
         }
 
-        // Explicit argv; no shell. argv[0] is the program.
+        // Explicit argv; no shell. argv[0] is the program. An empty vector is a
+        // registry integrity error and stays an `Err` (not a run result).
         let (program, args) = entry
             .argv
             .split_first()
             .ok_or_else(|| CapabilityError::Failed("empty argument vector".to_string()))?;
+
+        // Who chose the program (exact match against FIRA's own literals).
+        let launcher = launcher_provenance(program);
+
+        // Access to the audited project directory must be verifiable before
+        // anything is launched. If it is not, nothing is started and the result
+        // carries no infrastructure attribution.
+        let accessible_before = project_dir_accessible(&self.cwd);
+        if !accessible_before {
+            return Ok(build_result(
+                entry,
+                &RunFacts::StartFailed(StartFailure {
+                    cause: StartFailureCause::ProjectPathUnavailable,
+                    launcher,
+                }),
+                Some(
+                    "audited project path is not an accessible directory (access could not \
+                     be verified); the mechanism was not started"
+                        .to_string(),
+                ),
+                String::new(),
+            ));
+        }
 
         // Spawn (not `output()`): we must be able to interrupt a still-running
         // child, which `output()` cannot do (it blocks until EOF/exit).
@@ -163,9 +196,22 @@ impl CommandExecutor for ProjectCommandExecutor {
         // terminate_child + the documented subtree limitation.
         set_own_process_group(&mut cmd);
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| CapabilityError::Failed(format!("spawn failed: {e}")))?;
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                // The process did not start: a result, not an `Err`. The OS
+                // `ErrorKind` is normalized together with a second check of the
+                // project directory; the OS text is kept only as detail.
+                let accessible_after = project_dir_accessible(&self.cwd);
+                let cause = start_failure_cause(e.kind(), accessible_before, accessible_after);
+                return Ok(build_result(
+                    entry,
+                    &RunFacts::StartFailed(StartFailure { cause, launcher }),
+                    Some(format!("failed to start `{program}`: {e}")),
+                    String::new(),
+                ));
+            }
+        };
 
         // Drain stdout/stderr on their own threads so a chatty child cannot
         // deadlock against a full pipe while we wait on the bound.
@@ -185,15 +231,8 @@ impl CommandExecutor for ProjectCommandExecutor {
             captured.push_str(&err);
         }
 
-        let (outcome, blocking_condition) = match outcome {
-            WaitOutcome::Exited(success) => (
-                if success {
-                    ExecutionOutcome::Passed
-                } else {
-                    ExecutionOutcome::Failed
-                },
-                None,
-            ),
+        let (facts, blocking_condition) = match outcome {
+            WaitOutcome::Exited(success) => (RunFacts::Completed { success }, None),
             WaitOutcome::TimedOut { terminated } => {
                 let detail = if terminated {
                     format!(
@@ -208,19 +247,11 @@ impl CommandExecutor for ProjectCommandExecutor {
                     )
                 };
                 // Fail-safe: a timeout is UNKNOWN downstream, never PASS (C5).
-                (ExecutionOutcome::Timeout, Some(detail))
+                (RunFacts::TimedOut, Some(detail))
             }
         };
 
-        Ok(ExecutionResult {
-            command_id: entry.mechanism.id.clone(),
-            command: entry.mechanism.command.clone(),
-            outcome,
-            classification: None,
-            blocking_condition,
-            captured_output: captured,
-            exercised_behaviors: Vec::new(),
-        })
+        Ok(build_result(entry, &facts, blocking_condition, captured))
     }
 
     fn capabilities(&self) -> BTreeSet<Capability> {
@@ -333,3 +364,183 @@ fn set_own_process_group(cmd: &mut Command) {
 /// termination falls back to the direct child (documented limitation).
 #[cfg(not(unix))]
 fn set_own_process_group(_cmd: &mut Command) {}
+
+// ---------------------------------------------------------------------------
+// Failure-classification helpers (RUNTIME observes; CORE decides).
+// ---------------------------------------------------------------------------
+
+/// Launchers that `discovery.rs` writes as literals for `argv[0]` (not text
+/// coming from the audited project). Kept in sync with discovery by the unit
+/// test `fira_selected_launchers_match_discovery`.
+const FIRA_SELECTED_LAUNCHERS: [&str; 3] = ["cargo", "npm", "make"];
+
+/// `SelectedByFira` only when `program` is exactly one of FIRA's own launcher
+/// literals. Paths (`./cargo`, `/usr/bin/cargo`), other cases and affixed names
+/// are not established.
+fn launcher_provenance(program: &str) -> LauncherProvenance {
+    if FIRA_SELECTED_LAUNCHERS.contains(&program) {
+        LauncherProvenance::SelectedByFira
+    } else {
+        LauncherProvenance::NotEstablished
+    }
+}
+
+/// Whether access to the audited project directory can be verified: resolving
+/// `dir/.` must succeed and yield a directory. Resolving `.` requires search
+/// permission on `dir`. The directory is not enumerated; `PATH` and executable
+/// bits are not inspected.
+fn project_dir_accessible(dir: &Path) -> bool {
+    std::fs::metadata(dir.join("."))
+        .map(|m| m.is_dir())
+        .unwrap_or(false)
+}
+
+/// Normalize an OS error kind plus the two project-directory checks (before and
+/// after the start attempt) into a [`StartFailureCause`]. Any unverifiable
+/// access wins over the error kind.
+fn start_failure_cause(
+    kind: std::io::ErrorKind,
+    accessible_before: bool,
+    accessible_after: bool,
+) -> StartFailureCause {
+    if !(accessible_before && accessible_after) {
+        return StartFailureCause::ProjectPathUnavailable;
+    }
+    match kind {
+        std::io::ErrorKind::NotFound => StartFailureCause::ProgramNotFound,
+        std::io::ErrorKind::PermissionDenied => StartFailureCause::ProgramNotExecutable,
+        _ => StartFailureCause::Other,
+    }
+}
+
+/// The single constructor of an `ExecutionResult`: `(outcome, classification)`
+/// come only from [`classify_run`]; `blocking_condition` and `captured_output`
+/// are carried as detail and never feed the classification.
+fn build_result(
+    entry: &DiscoveredMechanism,
+    facts: &RunFacts,
+    blocking_condition: Option<String>,
+    captured_output: String,
+) -> ExecutionResult {
+    let classified = classify_run(facts);
+    ExecutionResult {
+        command_id: entry.mechanism.id.clone(),
+        command: entry.mechanism.command.clone(),
+        outcome: classified.outcome,
+        classification: classified.classification,
+        blocking_condition,
+        captured_output,
+        exercised_behaviors: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        launcher_provenance, project_dir_accessible, start_failure_cause, FIRA_SELECTED_LAUNCHERS,
+    };
+    use fira_core::failure_classification::{LauncherProvenance, StartFailureCause};
+    use std::collections::BTreeSet;
+    use std::io::ErrorKind;
+    use tempfile::tempdir;
+
+    /// AC-6: the allowlist equals the set of `argv[0]` literals discovery emits.
+    #[test]
+    fn fira_selected_launchers_match_discovery() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            "{\"scripts\":{\"test\":\"echo ok\"}}",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("Makefile"), "build:\n\ttrue\n").unwrap();
+
+        let launchers: BTreeSet<String> = crate::discovery::discover(dir.path())
+            .iter()
+            .map(|m| m.argv[0].clone())
+            .collect();
+        let allowlist: BTreeSet<String> = FIRA_SELECTED_LAUNCHERS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            launchers, allowlist,
+            "discovery launchers and the FIRA allowlist must be reviewed together"
+        );
+    }
+
+    /// AC-29: INFRA-capable causes only with both checks true and
+    /// NotFound/PermissionDenied; any false check is ProjectPathUnavailable.
+    #[test]
+    fn start_failure_cause_mapping() {
+        let kinds = [
+            ErrorKind::NotFound,
+            ErrorKind::PermissionDenied,
+            ErrorKind::InvalidInput,
+            ErrorKind::Other,
+        ];
+        for kind in kinds {
+            for (before, after) in [(true, true), (true, false), (false, true), (false, false)] {
+                let got = start_failure_cause(kind, before, after);
+                let expected = if !(before && after) {
+                    StartFailureCause::ProjectPathUnavailable
+                } else {
+                    match kind {
+                        ErrorKind::NotFound => StartFailureCause::ProgramNotFound,
+                        ErrorKind::PermissionDenied => StartFailureCause::ProgramNotExecutable,
+                        _ => StartFailureCause::Other,
+                    }
+                };
+                assert_eq!(got, expected, "{kind:?} before={before} after={after}");
+            }
+        }
+    }
+
+    #[test]
+    fn launcher_provenance_is_exact_match() {
+        for ok in ["cargo", "npm", "make"] {
+            assert_eq!(launcher_provenance(ok), LauncherProvenance::SelectedByFira);
+        }
+        for bad in [
+            "./cargo",
+            "/usr/bin/cargo",
+            "Cargo",
+            "cargo ",
+            "xcargo",
+            "cargo-build",
+            "",
+            "sh",
+        ] {
+            assert_eq!(
+                launcher_provenance(bad),
+                LauncherProvenance::NotEstablished,
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn project_dir_accessible_existing_dir() {
+        let dir = tempdir().unwrap();
+        assert!(project_dir_accessible(dir.path()));
+    }
+
+    #[test]
+    fn project_dir_accessible_missing_dir() {
+        let dir = tempdir().unwrap();
+        assert!(!project_dir_accessible(&dir.path().join("does-not-exist")));
+    }
+
+    #[test]
+    fn project_dir_accessible_regular_file() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, "x").unwrap();
+        assert!(!project_dir_accessible(&file));
+    }
+}

@@ -10,12 +10,16 @@ use clap::{Parser, ValueEnum};
 
 use fira_core::assessment::{HumanDecisionFira, TechnicalAssessment};
 use fira_core::classification::{classify, Classification};
-use fira_core::coverage::{AuditedArea, CoverageStatement, ExecutedMechanism, SkippedArea};
+use fira_core::coverage::{
+    AuditedArea, BlockedArea, CoverageStatement, ExecutedMechanism, SkippedArea,
+};
 use fira_core::execution::{ExecutionResult, VerificationMechanism};
 use fira_core::gate::Gate;
-use fira_core::gate_eval::{evaluate_execution_backed_gates, ExecutedMechanismResult};
+use fira_core::gate_eval::{
+    backing_gate, evaluate_execution_backed_gates_with_unexecuted, ExecutedMechanismResult,
+};
 use fira_core::interfaces::{CommandExecutor, RepositoryReader};
-use fira_core::model::{CoverageResult, ExecutionOutcome};
+use fira_core::model::{CoverageResult, ExecutionClassification, ExecutionOutcome};
 use fira_core::model::{
     Depth, GateCause, GateName, GateState, HumanDecisionFiraState, ProfileId, RequirementLevel,
 };
@@ -34,8 +38,8 @@ use fira_core::interfaces::AuditContextProvider;
 
 use fira_policy::{confirm_gate_view, profile_for, AppliedSelection, ConfirmGateView};
 use fira_runtime::{
-    detect_signals, discover, FsRepositoryReader, MechanismRegistry, OutputSink,
-    ProjectCommandExecutor,
+    detect_signals, discover, DiscoveredMechanism, FsRepositoryReader, MechanismRegistry,
+    OutputSink, ProjectCommandExecutor,
 };
 
 use crate::persistence::{resolve_default_base, AdapterAuditContextProvider};
@@ -218,9 +222,10 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
     let reader = FsRepositoryReader::new(&args.project)
         .map_err(|e| AdapterError::Capability(e.to_string()))?;
     let root = reader.root().to_path_buf();
-    let registry = MechanismRegistry::discover(&root);
+    // One discovery: the executor registry and the iterated collection are the
+    // same (R3.6), so there is no second, independent read of the filesystem.
     let mechanisms = discover(&root);
-    let executor = ProjectCommandExecutor::new(registry, &root);
+    let executor = executor_for(&mechanisms, &root);
 
     // 2. Build the AuditRequest (S1), execution_boundary = {READ, EXECUTE_EXISTING}.
     // Compose a distinct id per run so a fresh audit never collides with another
@@ -251,55 +256,9 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
     let view = confirm_gate_view(&profile);
 
     // 4. Execute each discovered mechanism (raw results only).
-    let mut executed: Vec<ExecutedMechanism> = Vec::new();
-    // Retain the full ExecutionResult + its declared mechanism record so the
-    // Tests/Build gate evaluation (step 5) can read the real outcomes. This is
-    // adapter-internal data flow; the coverage `executed_mechanisms` summary is
-    // still the `{command_id, outcome}` pair.
-    let mut executed_results: Vec<(VerificationMechanism, ExecutionResult)> = Vec::new();
-    // Task 14: a non-terminating mechanism returns NOT_RUN with a reason; a hung
-    // one returns TIMEOUT. Both are recorded as executed_mechanisms (with their
-    // outcome) and their reason is surfaced as a coverage limitation (C11: "not
-    // sufficiently audited"). Nothing becomes PASS (C5).
-    let mut mechanism_limitations: Vec<String> = Vec::new();
-    // Visibility slice: a declared mechanism that executes and FAILS is explicit
-    // negative execution evidence. We record each as a known-limitation entry so
-    // the failure is impossible to miss in the report — WITHOUT interpreting it
-    // (no APP/INFRA classification, no captured_output parsing, no gate change,
-    // no finding). The raw `executed_mechanisms` row is preserved unchanged.
-    let mut failed_mechanism_notes: Vec<String> = Vec::new();
-    for m in &mechanisms {
-        match executor.run_existing(&m.mechanism.id) {
-            Ok(result) => {
-                if let Some(reason) = &result.blocking_condition {
-                    mechanism_limitations.push(format!("{}: {reason}", result.command));
-                }
-                if result.outcome == ExecutionOutcome::Failed {
-                    failed_mechanism_notes.push(format!(
-                        "Declared verification mechanism '{}' executed and FAILED; \
-                         failure is not yet interpreted as an application defect.",
-                        result.command_id.0
-                    ));
-                }
-                executed.push(ExecutedMechanism {
-                    command_id: result.command_id.clone(),
-                    outcome: result.outcome,
-                });
-                executed_results.push((m.mechanism.clone(), result));
-            }
-            Err(_) => { /* capability gap → recorded as a limitation below */ }
-        }
-    }
-    // One summary line (the failure count) followed by the individual entries,
-    // so a skimming reviewer sees the count immediately (spec §9.2).
-    if !failed_mechanism_notes.is_empty() {
-        mechanism_limitations.push(format!(
-            "{} declared verification mechanism(s) executed and FAILED; recorded as \
-             negative execution evidence, not yet interpreted as application defects.",
-            failed_mechanism_notes.len()
-        ));
-        mechanism_limitations.extend(failed_mechanism_notes);
-    }
+    //    The raw results, the rows, the limitations and the backing mechanisms
+    //    without a result are all collected by `run_mechanisms`.
+    let phase = run_mechanisms(&executor, &mechanisms);
 
     // 5. Assemble an honest report. The P2–P11 interpretation pipeline is
     //    deferred, so no finding is derived and no gate STATE is derived from
@@ -314,14 +273,7 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
         .iter()
         .map(|g| (g.gate, g.requirement_level))
         .collect();
-    let backed: Vec<ExecutedMechanismResult<'_>> = executed_results
-        .iter()
-        .map(|(mech, result)| ExecutedMechanismResult {
-            mechanism: mech,
-            result,
-        })
-        .collect();
-    let evaluated = evaluate_execution_backed_gates(&profile_gate_levels, &backed);
+    let evaluated = gates_from_phase(&profile_gate_levels, &phase);
     // Merge: a gate_eval result replaces the UNKNOWN default for the same gate.
     for ev in evaluated {
         if let Some(slot) = gates.iter_mut().find(|g| g.name == ev.name) {
@@ -340,7 +292,7 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
     // evidence state is recorded as a coverage limitation (C11). No finding is
     // published (an UNVERIFIED property has no SUFFICIENT execution evidence —
     // CONF-2), so `findings` stays empty.
-    let fencing = audit_fencing_property(&reader, npm_test_passed(&executed_results));
+    let fencing = audit_fencing_property(&reader, npm_test_passed(&phase.executed_results));
     if let Some(assessment) = &fencing {
         if let Some(slot) = gates.iter_mut().find(|g| g.name == FENCING_GATE) {
             // Record the property's evidence state on the gate's rationale; the
@@ -370,6 +322,12 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
             .unwrap_or(HumanDecisionFiraState::Pending),
     };
 
+    let blocked_areas = infra_blocked_areas(&phase.executed_results, &gates);
+    let ExecutionPhase {
+        executed,
+        limitations: mechanism_limitations,
+        ..
+    } = phase;
     let mut coverage_limitations = mechanism_limitations;
     if let Some(assessment) = &fencing {
         coverage_limitations.push(format!(
@@ -378,7 +336,7 @@ pub fn run_audit(args: AuditArgs) -> Result<AuditOutput, AdapterError> {
             assessment.rationale
         ));
     }
-    let coverage = build_coverage(&gates, executed, coverage_limitations);
+    let coverage = build_coverage(&gates, executed, coverage_limitations, blocked_areas);
 
     // The report-assembly instant (R1.1): the only clock read for provenance,
     // in the ADAPTER (CORE only formats). A clock failure aborts the run before
@@ -546,6 +504,211 @@ fn settle_selection(
     }
 }
 
+/// Build the executor from the SAME collection that is iterated (R3.6), so the
+/// registry can never disagree with the mechanisms the report lists and the
+/// filesystem is read once.
+fn executor_for(
+    mechanisms: &[DiscoveredMechanism],
+    root: &std::path::Path,
+) -> ProjectCommandExecutor {
+    ProjectCommandExecutor::new(MechanismRegistry::from_entries(mechanisms.to_vec()), root)
+}
+
+/// Everything the execution step produces, kept together so gate evaluation and
+/// coverage read one consistent view.
+struct ExecutionPhase {
+    /// One `{command_id, outcome}` row per `Ok(ExecutionResult)` (R3.1).
+    executed: Vec<ExecutedMechanism>,
+    /// The full results with their declared mechanism record (adapter-internal).
+    executed_results: Vec<(VerificationMechanism, ExecutionResult)>,
+    /// Mechanisms with a `backing_gate` for which `run_existing` returned `Err`.
+    /// They never become a result; they only prevent their gate from being PASS.
+    without_result: Vec<VerificationMechanism>,
+    /// Coverage limitations, in report order.
+    limitations: Vec<String>,
+}
+
+/// Note for a FAILED mechanism, chosen by the effective classification only.
+/// An absent or `UNCLASSIFIED` classification never states an application
+/// attribution (R3.3, R6.3).
+fn failed_note(id: &str, classification: Option<ExecutionClassification>) -> String {
+    match classification {
+        None | Some(ExecutionClassification::Unclassified) => format!(
+            "Declared verification mechanism '{id}' executed and FAILED; failure is not yet \
+             interpreted as an application defect; attribution is not established \
+             (UNCLASSIFIED); no application defect has been established."
+        ),
+        Some(ExecutionClassification::AppLevel) => format!(
+            "Declared verification mechanism '{id}' executed and FAILED; classified APP_LEVEL \
+             by the execution layer."
+        ),
+        Some(ExecutionClassification::InfraLevel) => format!(
+            "Declared verification mechanism '{id}' executed and FAILED; classified INFRA_LEVEL \
+             (infrastructure impediment); not an application-level result."
+        ),
+    }
+}
+
+/// Note for an ERROR mechanism, chosen by the effective classification only.
+fn error_note(id: &str, classification: Option<ExecutionClassification>) -> String {
+    match classification {
+        Some(ExecutionClassification::InfraLevel) => format!(
+            "Declared verification mechanism '{id}' could not be started (outcome ERROR, \
+             INFRA_LEVEL): the operating system reported that a launcher selected by FIRA \
+             could not be found or executed (attribution based on the operating system error \
+             kind only; the exact cause is not established); the mechanism was not executed \
+             and provides no evidence."
+        ),
+        None | Some(ExecutionClassification::Unclassified) => format!(
+            "Declared verification mechanism '{id}' could not be started (outcome ERROR, \
+             UNCLASSIFIED): no positive infrastructure attribution; the mechanism was not \
+             executed and provides no evidence."
+        ),
+        Some(ExecutionClassification::AppLevel) => format!(
+            "Declared verification mechanism '{id}' ended with outcome ERROR classified \
+             APP_LEVEL by the execution layer."
+        ),
+    }
+}
+
+/// Run every discovered mechanism through `executor`, in discovery order.
+///
+/// - `Ok(result)`: always a row in `executed` (even ERROR) and an entry in
+///   `executed_results`; FAILED/ERROR get a note per classification.
+/// - `Err(e)`: a limitation only. It is never turned into a result or a row. If
+///   the mechanism backs a gate it is kept in `without_result` so that gate
+///   cannot be PASS (R3.5).
+///
+/// `captured_output` is never read.
+fn run_mechanisms(
+    executor: &dyn CommandExecutor,
+    mechanisms: &[DiscoveredMechanism],
+) -> ExecutionPhase {
+    let mut executed: Vec<ExecutedMechanism> = Vec::new();
+    // Retain the full ExecutionResult + its declared mechanism record so the
+    // Tests/Build gate evaluation can read the real outcomes. The coverage
+    // `executed_mechanisms` summary is still the `{command_id, outcome}` pair.
+    let mut executed_results: Vec<(VerificationMechanism, ExecutionResult)> = Vec::new();
+    let mut without_result: Vec<VerificationMechanism> = Vec::new();
+    // Task 14: NOT_RUN / TIMEOUT reasons (and start-failure details) surface as
+    // coverage limitations (C11: "not sufficiently audited"). Nothing is PASS.
+    let mut limitations: Vec<String> = Vec::new();
+    // A declared mechanism that FAILS is explicit negative execution evidence;
+    // each is a known-limitation entry stating its classification, without
+    // asserting an application defect unless the execution layer classified it.
+    let mut failed_notes: Vec<String> = Vec::new();
+    let mut error_notes: Vec<String> = Vec::new();
+    for m in mechanisms {
+        match executor.run_existing(&m.mechanism.id) {
+            Ok(result) => {
+                if let Some(reason) = &result.blocking_condition {
+                    limitations.push(format!("{}: {reason}", result.command));
+                }
+                match result.outcome {
+                    ExecutionOutcome::Failed => {
+                        failed_notes.push(failed_note(&result.command_id.0, result.classification))
+                    }
+                    ExecutionOutcome::Error => {
+                        error_notes.push(error_note(&result.command_id.0, result.classification))
+                    }
+                    _ => {}
+                }
+                executed.push(ExecutedMechanism {
+                    command_id: result.command_id.clone(),
+                    outcome: result.outcome,
+                });
+                executed_results.push((m.mechanism.clone(), result));
+            }
+            Err(e) => {
+                let id = &m.mechanism.id.0;
+                let mut line = format!(
+                    "Declared verification mechanism '{id}' could not be executed: {e}; no \
+                     execution result exists."
+                );
+                if backing_gate(&m.mechanism).is_some() {
+                    line.push_str("; the gate it backs cannot be evaluated as PASS");
+                    without_result.push(m.mechanism.clone());
+                }
+                limitations.push(line);
+            }
+        }
+    }
+    // One neutral summary line (the failure count) followed by the individual
+    // entries, so a skimming reviewer sees the count immediately (spec §9.2).
+    if !failed_notes.is_empty() {
+        limitations.push(format!(
+            "{} declared verification mechanism(s) executed and FAILED; recorded as negative \
+             execution evidence; attribution is stated per mechanism.",
+            failed_notes.len()
+        ));
+        limitations.extend(failed_notes);
+    }
+    limitations.extend(error_notes);
+    ExecutionPhase {
+        executed,
+        executed_results,
+        without_result,
+        limitations,
+    }
+}
+
+/// Evaluate the execution-backed gates (Tests, Build) including the backing
+/// mechanisms that have no result. The state of each gate is decided by CORE.
+fn gates_from_phase(
+    profile_gate_levels: &[(GateName, RequirementLevel)],
+    phase: &ExecutionPhase,
+) -> Vec<Gate> {
+    let backed: Vec<ExecutedMechanismResult<'_>> = phase
+        .executed_results
+        .iter()
+        .map(|(mech, result)| ExecutedMechanismResult {
+            mechanism: mech,
+            result,
+        })
+        .collect();
+    let without_result: Vec<&VerificationMechanism> = phase.without_result.iter().collect();
+    evaluate_execution_backed_gates_with_unexecuted(profile_gate_levels, &backed, &without_result)
+}
+
+/// Fixed detail used when an INFRA result carries no `blocking_condition`.
+const INFRA_BLOCKED_FALLBACK: &str =
+    "infrastructure impediment reported by the execution layer; no further detail recorded";
+
+/// `blocked_areas` for results classified `INFRA_LEVEL` (outcome ERROR, FAILED
+/// or BLOCKED). An entry exists only when the mechanism backs a gate that is
+/// present in the report and applicable; the `area` is that gate's name. A
+/// mechanism without a gate (or whose gate is absent or N/A) yields no entry and
+/// no invented area: its ERROR row and limitation remain.
+fn infra_blocked_areas(
+    executed_results: &[(VerificationMechanism, ExecutionResult)],
+    gates: &[Gate],
+) -> Vec<BlockedArea> {
+    executed_results
+        .iter()
+        .filter(|(_, r)| {
+            r.classification == Some(ExecutionClassification::InfraLevel)
+                && matches!(
+                    r.outcome,
+                    ExecutionOutcome::Error | ExecutionOutcome::Failed | ExecutionOutcome::Blocked
+                )
+        })
+        .filter_map(|(mech, r)| {
+            let gate = backing_gate(mech)?;
+            gates
+                .iter()
+                .find(|g| g.name == gate && g.state != GateState::NotApplicable)?;
+            Some(BlockedArea {
+                area: gate_wire(&gate),
+                blocking_condition: r
+                    .blocking_condition
+                    .clone()
+                    .unwrap_or_else(|| INFRA_BLOCKED_FALLBACK.to_string()),
+                execution_result_ref: r.command_id.clone(),
+            })
+        })
+        .collect()
+}
+
 /// Whether the canonical `npm-test` mechanism executed and PASSED (level 4 — the
 /// mechanism-OBSERVED fact). This is NOT, on its own, evidence for the fencing
 /// property (that would be the forbidden inference); it is passed to the CORE
@@ -645,6 +808,7 @@ fn build_coverage(
     gates: &[Gate],
     executed: Vec<ExecutedMechanism>,
     mechanism_limitations: Vec<String>,
+    blocked_areas: Vec<BlockedArea>,
 ) -> CoverageStatement {
     // A gate the slice actually evaluated (PASS/FAIL) is an *audited* area;
     // every other gate remains a *skipped* area ("not sufficiently audited").
@@ -663,10 +827,17 @@ fn build_coverage(
                 depth: Depth::Standard,
                 result: CoverageResult::IssuesFound,
             }),
-            _ => skipped_areas.push(SkippedArea {
-                area: gate_wire(&g.name),
-                reason: "audit interpretation (P2-P11) not yet performed".to_string(),
-            }),
+            // A gate represented in `blocked_areas` is not also skipped: each
+            // gate stays in exactly one of the three lists (R5.3).
+            _ => {
+                let area = gate_wire(&g.name);
+                if !blocked_areas.iter().any(|b| b.area == area) {
+                    skipped_areas.push(SkippedArea {
+                        area,
+                        reason: "audit interpretation (P2-P11) not yet performed".to_string(),
+                    });
+                }
+            }
         }
     }
     let mut known_limitations = vec![
@@ -682,7 +853,7 @@ fn build_coverage(
     CoverageStatement {
         audited_areas,
         skipped_areas,
-        blocked_areas: Vec::new(),
+        blocked_areas,
         executed_mechanisms: executed,
         known_limitations,
         assumptions: Vec::new(),
@@ -1203,5 +1374,806 @@ mod tests {
             report,
             "persisted report differs from validated"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // failure-classification-slice, Task 4: evidence preservation, coherent
+    // registry and `blocked_areas`. A stub `CommandExecutor` supplies any
+    // `(outcome, classification)` or `Err`, including shapes that real
+    // executions cannot reach. No process is started.
+    // ---------------------------------------------------------------------
+
+    use super::{
+        build_coverage, error_note, executor_for, failed_note, gate_wire, gates_from_phase,
+        infra_blocked_areas, run_mechanisms, ExecutionPhase, INFRA_BLOCKED_FALLBACK,
+    };
+    use fira_core::coverage::BlockedArea;
+    use fira_core::execution::{ExecutionResult, VerificationMechanism};
+    use fira_core::gate::Gate;
+    use fira_core::interfaces::{CapabilityError, CommandExecutor};
+    use fira_core::model::{
+        AlwaysTrue, Capability, ExecutionClassification as Class, ExecutionOutcome as Outcome,
+        GateCause, GateName, GateState, IdRef, RequirementLevel, VerificationMechanismSource,
+    };
+    use fira_runtime::DiscoveredMechanism;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn discovered(id: &str, non_terminating: Option<&str>) -> DiscoveredMechanism {
+        DiscoveredMechanism {
+            mechanism: VerificationMechanism {
+                id: IdRef(id.to_string()),
+                source: VerificationMechanismSource::Make,
+                source_locator: "Makefile:1".to_string(),
+                command: format!("make {id}"),
+                declared_by_project: AlwaysTrue,
+            },
+            argv: vec!["make".to_string(), id.to_string()],
+            non_terminating_reason: non_terminating.map(str::to_string),
+        }
+    }
+
+    fn exec_result(
+        id: &str,
+        outcome: Outcome,
+        classification: Option<Class>,
+        blocking: Option<&str>,
+    ) -> ExecutionResult {
+        ExecutionResult {
+            command_id: IdRef(id.to_string()),
+            command: format!("make {id}"),
+            outcome,
+            classification,
+            blocking_condition: blocking.map(str::to_string),
+            captured_output: String::new(),
+            exercised_behaviors: Vec::new(),
+        }
+    }
+
+    /// Answers `run_existing` from a fixed table; an id not in the table is
+    /// `NotFound`, like the real executor.
+    struct StubExecutor {
+        answers: BTreeMap<String, Result<ExecutionResult, CapabilityError>>,
+    }
+
+    impl StubExecutor {
+        fn new(answers: Vec<(&str, Result<ExecutionResult, CapabilityError>)>) -> Self {
+            StubExecutor {
+                answers: answers
+                    .into_iter()
+                    .map(|(id, a)| (id.to_string(), a))
+                    .collect(),
+            }
+        }
+    }
+
+    impl CommandExecutor for StubExecutor {
+        fn run_existing(&self, command_id: &IdRef) -> Result<ExecutionResult, CapabilityError> {
+            self.answers
+                .get(&command_id.0)
+                .cloned()
+                .unwrap_or_else(|| Err(CapabilityError::NotFound(command_id.0.clone())))
+        }
+
+        fn capabilities(&self) -> BTreeSet<Capability> {
+            BTreeSet::new()
+        }
+
+        fn discover_mechanisms(&self) -> Result<Vec<VerificationMechanism>, CapabilityError> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn levels() -> Vec<(GateName, RequirementLevel)> {
+        vec![
+            (GateName::Build, RequirementLevel::Required),
+            (GateName::Tests, RequirementLevel::Required),
+        ]
+    }
+
+    fn run(
+        mechs: &[DiscoveredMechanism],
+        answers: Vec<(&str, Result<ExecutionResult, CapabilityError>)>,
+    ) -> ExecutionPhase {
+        run_mechanisms(&StubExecutor::new(answers), mechs)
+    }
+
+    fn gate_of(gates: &[Gate], name: GateName) -> &Gate {
+        gates.iter().find(|g| g.name == name).expect("gate present")
+    }
+
+    fn unknown_gate(name: GateName) -> Gate {
+        Gate {
+            name,
+            requirement_level: RequirementLevel::Required,
+            state: GateState::Unknown,
+            rationale: "x".to_string(),
+            cause: Some(GateCause::None),
+            support_mappings: Vec::new(),
+            supporting_findings: Vec::new(),
+        }
+    }
+
+    /// The same mechanism written as a (declared record, result) pair.
+    fn pair(
+        id: &str,
+        outcome: Outcome,
+        classification: Option<Class>,
+        blocking: Option<&str>,
+    ) -> (VerificationMechanism, ExecutionResult) {
+        (
+            discovered(id, None).mechanism,
+            exec_result(id, outcome, classification, blocking),
+        )
+    }
+
+    // ----- AC-26: an `Err` is a limitation, never a result -----
+
+    /// R3.2: the limitation names the mechanism and the error.
+    #[test]
+    fn err_from_executor_is_recorded_as_limitation() {
+        let mechs = [discovered("make-test", None)];
+        let phase = run(
+            &mechs,
+            vec![(
+                "make-test",
+                Err(CapabilityError::Failed("boom".to_string())),
+            )],
+        );
+        let line = phase
+            .limitations
+            .iter()
+            .find(|l| l.contains("'make-test'"))
+            .expect("limitation names the mechanism");
+        assert!(line.contains("could not be executed"), "{line}");
+        assert!(line.contains("boom"), "the error is named: {line}");
+        assert!(line.contains("no execution result exists"), "{line}");
+    }
+
+    /// R3.5: a sibling PASSED cannot hide a backing mechanism with no result.
+    #[test]
+    fn err_on_backing_mechanism_blocks_pass_even_with_passed_sibling() {
+        let mechs = [discovered("make-test", None), discovered("npm-test", None)];
+        let phase = run(
+            &mechs,
+            vec![
+                (
+                    "make-test",
+                    Ok(exec_result("make-test", Outcome::Passed, None, None)),
+                ),
+                ("npm-test", Err(CapabilityError::Failed("boom".to_string()))),
+            ],
+        );
+        assert_eq!(phase.without_result.len(), 1);
+        assert_eq!(phase.without_result[0].id.0, "npm-test");
+        let line = phase
+            .limitations
+            .iter()
+            .find(|l| l.contains("'npm-test'"))
+            .expect("limitation");
+        assert!(line.contains("the gate it backs cannot be evaluated as PASS"));
+
+        let gates = gates_from_phase(&levels(), &phase);
+        let tests = gate_of(&gates, GateName::Tests);
+        assert_eq!(tests.state, GateState::Unknown);
+        assert_eq!(tests.cause, Some(GateCause::None));
+        assert!(
+            tests.rationale.contains("could not be executed"),
+            "{}",
+            tests.rationale
+        );
+    }
+
+    /// R3.2: no row, no result and no ERROR outcome come from an `Err`.
+    #[test]
+    fn err_is_not_converted_to_error_result() {
+        let mechs = [
+            discovered("make-test", None),
+            discovered("make-build", None),
+        ];
+        let phase = run(
+            &mechs,
+            vec![
+                (
+                    "make-test",
+                    Err(CapabilityError::Failed("boom".to_string())),
+                ),
+                (
+                    "make-build",
+                    Err(CapabilityError::NotFound("make-build".to_string())),
+                ),
+            ],
+        );
+        assert!(phase.executed.is_empty(), "no executed_mechanisms row");
+        assert!(phase.executed_results.is_empty(), "no ExecutionResult");
+        assert!(phase.executed.iter().all(|r| r.outcome != Outcome::Error));
+        assert_eq!(phase.without_result.len(), 2);
+        assert_eq!(phase.limitations.len(), 2);
+    }
+
+    /// A mechanism that backs no gate only adds the limitation.
+    #[test]
+    fn err_on_non_backing_mechanism_only_adds_limitation() {
+        let mechs = [discovered("make-lint", None), discovered("make-test", None)];
+        let phase = run(
+            &mechs,
+            vec![
+                (
+                    "make-lint",
+                    Err(CapabilityError::Failed("boom".to_string())),
+                ),
+                (
+                    "make-test",
+                    Ok(exec_result("make-test", Outcome::Passed, None, None)),
+                ),
+            ],
+        );
+        assert!(phase.without_result.is_empty());
+        assert_eq!(phase.limitations.len(), 1);
+        assert!(phase.limitations[0].contains("'make-lint'"));
+        assert!(!phase.limitations[0].contains("the gate it backs"));
+        // The sibling keeps its PASS: nothing else changed.
+        let gates = gates_from_phase(&levels(), &phase);
+        assert_eq!(gate_of(&gates, GateName::Tests).state, GateState::Pass);
+    }
+
+    // ----- AC-30: one collection feeds both the executor and the iteration -----
+
+    #[test]
+    fn executor_registry_matches_discovered_collection() {
+        // Non-terminating entries return NOT_RUN without starting a process.
+        let mechs = [
+            discovered("make-test", Some("watcher")),
+            discovered("custom-one", Some("watcher")),
+        ];
+        let root = std::env::temp_dir();
+        let executor = executor_for(&mechs, &root);
+
+        let ids: Vec<String> = executor
+            .discover_mechanisms()
+            .expect("registry listing")
+            .into_iter()
+            .map(|m| m.id.0)
+            .collect();
+        let expected: Vec<String> = mechs.iter().map(|m| m.mechanism.id.0.clone()).collect();
+        assert_eq!(ids, expected, "exactly the ids of the given collection");
+
+        for m in &mechs {
+            let r = executor
+                .run_existing(&m.mechanism.id)
+                .expect("every given id resolves");
+            assert_eq!(r.outcome, Outcome::NotRun);
+            assert_eq!(r.command_id, m.mechanism.id);
+        }
+        assert!(executor
+            .run_existing(&IdRef("not-in-collection".to_string()))
+            .is_err());
+    }
+
+    // ----- notes depend on the classification only -----
+
+    #[test]
+    fn failed_notes_follow_classification() {
+        for c in [None, Some(Class::Unclassified)] {
+            let n = failed_note("m", c);
+            for needle in [
+                "FAILED",
+                "not yet interpreted",
+                "attribution is not established",
+                "no application defect has been established",
+            ] {
+                assert!(n.contains(needle), "{needle}: {n}");
+            }
+            assert!(!n.contains("APP_LEVEL"), "{n}");
+        }
+        let app = failed_note("m", Some(Class::AppLevel));
+        assert!(app.contains("classified APP_LEVEL by the execution layer"));
+        let infra = failed_note("m", Some(Class::InfraLevel));
+        assert!(infra.contains("INFRA_LEVEL") && infra.contains("not an application-level"));
+        assert!(!infra.contains("APP_LEVEL"));
+    }
+
+    #[test]
+    fn error_notes_follow_classification() {
+        for c in [None, Some(Class::Unclassified)] {
+            let n = error_note("m", c);
+            assert!(n.contains("UNCLASSIFIED"), "{n}");
+            assert!(n.contains("no positive infrastructure attribution"), "{n}");
+            assert!(n.contains("provides no evidence"), "{n}");
+            assert!(
+                !n.contains("INFRA_LEVEL") && !n.contains("APP_LEVEL"),
+                "{n}"
+            );
+        }
+        let app = error_note("m", Some(Class::AppLevel));
+        assert!(app.contains("classified APP_LEVEL by the execution layer"));
+
+        // End to end through `run_mechanisms`: the note follows the result.
+        let mechs = [
+            discovered("make-test", None),
+            discovered("make-build", None),
+        ];
+        let phase = run(
+            &mechs,
+            vec![
+                (
+                    "make-test",
+                    Ok(exec_result("make-test", Outcome::Error, None, Some("d1"))),
+                ),
+                (
+                    "make-build",
+                    Ok(exec_result(
+                        "make-build",
+                        Outcome::Error,
+                        Some(Class::Unclassified),
+                        Some("d2"),
+                    )),
+                ),
+            ],
+        );
+        assert_eq!(
+            phase
+                .limitations
+                .iter()
+                .filter(|l| l.contains("could not be started (outcome ERROR, UNCLASSIFIED)"))
+                .count(),
+            2
+        );
+    }
+
+    /// AC-29 (adapter part): the INFRA note does not claim the exact cause.
+    #[test]
+    fn error_infra_note_is_hedged() {
+        let n = error_note("make-test", Some(Class::InfraLevel));
+        assert!(n.contains("INFRA_LEVEL"));
+        assert!(n.contains("attribution based on the operating system error kind only"));
+        assert!(n.contains("exact cause is not established"));
+        assert!(n.contains("was not executed and provides no evidence"));
+    }
+
+    /// The count line makes no attribution claim, whatever the classifications.
+    #[test]
+    fn summary_line_is_attribution_neutral() {
+        let mechs = [
+            discovered("make-test", None),
+            discovered("make-build", None),
+            discovered("make-lint", None),
+        ];
+        let phase = run(
+            &mechs,
+            vec![
+                (
+                    "make-test",
+                    Ok(exec_result(
+                        "make-test",
+                        Outcome::Failed,
+                        Some(Class::AppLevel),
+                        None,
+                    )),
+                ),
+                (
+                    "make-build",
+                    Ok(exec_result("make-build", Outcome::Failed, None, None)),
+                ),
+                (
+                    "make-lint",
+                    Ok(exec_result(
+                        "make-lint",
+                        Outcome::Failed,
+                        Some(Class::Unclassified),
+                        None,
+                    )),
+                ),
+            ],
+        );
+        let summary_pos = phase
+            .limitations
+            .iter()
+            .position(|l| l.contains("declared verification mechanism(s) executed and FAILED"))
+            .expect("summary line present");
+        let summary = &phase.limitations[summary_pos];
+        assert!(summary.starts_with("3 declared"), "{summary}");
+        assert!(summary.contains("attribution is stated per mechanism"));
+        for forbidden in ["APP", "INFRA", "UNCLASSIFIED", "application defect"] {
+            assert!(!summary.contains(forbidden), "{forbidden}: {summary}");
+        }
+        // The summary comes first, followed by exactly one note per failure.
+        let notes = &phase.limitations[summary_pos + 1..];
+        assert_eq!(notes.len(), 3);
+        assert!(notes[0].contains("'make-test'") && notes[0].contains("APP_LEVEL"));
+        assert!(notes[1].contains("'make-build'") && notes[1].contains("UNCLASSIFIED"));
+    }
+
+    /// Unaffected mechanisms keep their behavior: no note, no extra limitation.
+    #[test]
+    fn passed_timeout_and_not_run_add_no_notes() {
+        let mechs = [
+            discovered("make-test", None),
+            discovered("make-build", None),
+            discovered("make-lint", None),
+        ];
+        let phase = run(
+            &mechs,
+            vec![
+                (
+                    "make-test",
+                    Ok(exec_result("make-test", Outcome::Passed, None, None)),
+                ),
+                (
+                    "make-build",
+                    Ok(exec_result(
+                        "make-build",
+                        Outcome::Timeout,
+                        None,
+                        Some("slow"),
+                    )),
+                ),
+                (
+                    "make-lint",
+                    Ok(exec_result(
+                        "make-lint",
+                        Outcome::NotRun,
+                        None,
+                        Some("watcher"),
+                    )),
+                ),
+            ],
+        );
+        assert_eq!(phase.executed.len(), 3);
+        assert_eq!(
+            phase.limitations,
+            vec![
+                "make make-build: slow".to_string(),
+                "make make-lint: watcher".to_string()
+            ]
+        );
+        assert!(infra_blocked_areas(
+            &phase.executed_results,
+            &[unknown_gate(GateName::Build), unknown_gate(GateName::Tests),]
+        )
+        .is_empty());
+    }
+
+    // ----- infra_blocked_areas -----
+
+    fn both_gates() -> Vec<Gate> {
+        vec![unknown_gate(GateName::Build), unknown_gate(GateName::Tests)]
+    }
+
+    /// The three admitted outcomes each produce an entry for the backed gate.
+    #[test]
+    fn infra_blocked_areas_builder_covers_error_failed_and_blocked() {
+        for outcome in [Outcome::Error, Outcome::Failed, Outcome::Blocked] {
+            let results = [pair(
+                "make-test",
+                outcome,
+                Some(Class::InfraLevel),
+                Some("detail"),
+            )];
+            let areas = infra_blocked_areas(&results, &both_gates());
+            assert_eq!(
+                areas,
+                vec![BlockedArea {
+                    area: "Tests".to_string(),
+                    blocking_condition: "detail".to_string(),
+                    execution_result_ref: IdRef("make-test".to_string()),
+                }],
+                "{outcome:?}"
+            );
+        }
+    }
+
+    /// Only INFRA_LEVEL and only ERROR/FAILED/BLOCKED produce an entry.
+    #[test]
+    fn infra_blocked_areas_builder_ignores_other_shapes() {
+        let results = [
+            pair(
+                "make-test",
+                Outcome::Error,
+                Some(Class::Unclassified),
+                Some("d"),
+            ),
+            pair("make-test", Outcome::Error, None, Some("d")),
+            pair(
+                "make-test",
+                Outcome::Error,
+                Some(Class::AppLevel),
+                Some("d"),
+            ),
+            pair("make-build", Outcome::Timeout, None, Some("d")),
+            pair("make-build", Outcome::NotRun, None, Some("d")),
+            pair("make-build", Outcome::Passed, None, None),
+            // INFRA with an outcome outside {ERROR, FAILED, BLOCKED}.
+            pair(
+                "make-build",
+                Outcome::Timeout,
+                Some(Class::InfraLevel),
+                Some("d"),
+            ),
+        ];
+        assert!(infra_blocked_areas(&results, &both_gates()).is_empty());
+    }
+
+    /// A gate that is absent or N/A yields no entry and no invented area.
+    #[test]
+    fn infra_blocked_areas_builder_requires_present_applicable_gate() {
+        let results = [pair(
+            "make-test",
+            Outcome::Error,
+            Some(Class::InfraLevel),
+            Some("d"),
+        )];
+
+        let absent = [unknown_gate(GateName::Build)];
+        assert!(infra_blocked_areas(&results, &absent).is_empty());
+        assert!(infra_blocked_areas(&results, &[]).is_empty());
+
+        let mut na = unknown_gate(GateName::Tests);
+        na.state = GateState::NotApplicable;
+        na.requirement_level = RequirementLevel::NotApplicable;
+        assert!(infra_blocked_areas(&results, &[na]).is_empty());
+    }
+
+    /// A mechanism that backs no gate (lint, variants, unknown ids) yields none.
+    #[test]
+    fn infra_blocked_areas_builder_skips_mechanism_without_backing_gate() {
+        let results = [
+            pair(
+                "make-lint",
+                Outcome::Error,
+                Some(Class::InfraLevel),
+                Some("d"),
+            ),
+            pair(
+                "npm-test:coverage",
+                Outcome::Error,
+                Some(Class::InfraLevel),
+                Some("d"),
+            ),
+        ];
+        assert!(infra_blocked_areas(&results, &both_gates()).is_empty());
+    }
+
+    /// A mechanism whose `run_existing` returned `Err` has no result, so it
+    /// contributes no entry (there is no `execution_result_ref` to point at).
+    #[test]
+    fn infra_blocked_areas_builder_ignores_mechanism_with_err() {
+        let mechs = [discovered("make-test", None)];
+        let phase = run(
+            &mechs,
+            vec![(
+                "make-test",
+                Err(CapabilityError::Failed("boom".to_string())),
+            )],
+        );
+        assert!(infra_blocked_areas(&phase.executed_results, &both_gates()).is_empty());
+    }
+
+    /// Entries follow execution order and refs resolve to executed rows.
+    #[test]
+    fn infra_blocked_areas_builder_orders_entries_and_keeps_references() {
+        let mechs = [
+            discovered("make-test", None),
+            discovered("make-build", None),
+            discovered("npm-test", None),
+        ];
+        let phase = run(
+            &mechs,
+            vec![
+                (
+                    "make-test",
+                    Ok(exec_result(
+                        "make-test",
+                        Outcome::Error,
+                        Some(Class::InfraLevel),
+                        Some("t1"),
+                    )),
+                ),
+                (
+                    "make-build",
+                    Ok(exec_result(
+                        "make-build",
+                        Outcome::Error,
+                        Some(Class::InfraLevel),
+                        Some("b1"),
+                    )),
+                ),
+                (
+                    "npm-test",
+                    Ok(exec_result(
+                        "npm-test",
+                        Outcome::Error,
+                        Some(Class::InfraLevel),
+                        Some("t2"),
+                    )),
+                ),
+            ],
+        );
+        let gates = gates_from_phase(&levels(), &phase);
+        let areas = infra_blocked_areas(&phase.executed_results, &gates);
+        let summary: Vec<(&str, &str, &str)> = areas
+            .iter()
+            .map(|a| {
+                (
+                    a.area.as_str(),
+                    a.blocking_condition.as_str(),
+                    a.execution_result_ref.0.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("Tests", "t1", "make-test"),
+                ("Build", "b1", "make-build"),
+                ("Tests", "t2", "npm-test"),
+            ]
+        );
+        for a in &areas {
+            assert!(
+                phase
+                    .executed
+                    .iter()
+                    .any(|r| r.command_id == a.execution_result_ref),
+                "dangling reference {a:?}"
+            );
+            assert!(!a.blocking_condition.is_empty());
+        }
+        // The blocked gates are UNKNOWN/INFRA, decided by CORE.
+        for name in [GateName::Build, GateName::Tests] {
+            let g = gate_of(&gates, name);
+            assert_eq!(
+                (g.state, g.cause),
+                (GateState::Unknown, Some(GateCause::Infra))
+            );
+        }
+    }
+
+    /// With no detail, the fixed fallback text is used; the area is not invented.
+    #[test]
+    fn infra_blocked_areas_builder_uses_fixed_fallback_without_detail() {
+        let results = [pair(
+            "make-build",
+            Outcome::Failed,
+            Some(Class::InfraLevel),
+            None,
+        )];
+        let areas = infra_blocked_areas(&results, &both_gates());
+        assert_eq!(areas.len(), 1);
+        assert_eq!(areas[0].area, "Build");
+        assert_eq!(areas[0].blocking_condition, INFRA_BLOCKED_FALLBACK);
+        assert!(!areas[0].blocking_condition.is_empty());
+    }
+
+    // ----- build_coverage -----
+
+    /// R5.3: a gate in `blocked_areas` is not skipped; each gate is in exactly
+    /// one of the three lists; the rest keeps its previous classification.
+    #[test]
+    fn gate_in_blocked_areas_is_not_in_skipped() {
+        let mut pass = unknown_gate(GateName::Build);
+        pass.state = GateState::Pass;
+        let gates = vec![
+            pass,
+            unknown_gate(GateName::Tests),
+            unknown_gate(GateName::Security),
+        ];
+        let blocked = vec![BlockedArea {
+            area: "Tests".to_string(),
+            blocking_condition: "detail".to_string(),
+            execution_result_ref: IdRef("make-test".to_string()),
+        }];
+        let cov = build_coverage(&gates, Vec::new(), Vec::new(), blocked.clone());
+
+        assert_eq!(cov.blocked_areas, blocked);
+        let skipped: Vec<&str> = cov.skipped_areas.iter().map(|s| s.area.as_str()).collect();
+        assert_eq!(skipped, vec!["Security"]);
+        assert_eq!(
+            cov.skipped_areas[0].reason,
+            "audit interpretation (P2-P11) not yet performed"
+        );
+        let audited: Vec<&str> = cov.audited_areas.iter().map(|a| a.area.as_str()).collect();
+        assert_eq!(audited, vec!["Build"]);
+
+        for g in &gates {
+            let name = gate_wire(&g.name);
+            let n = cov.audited_areas.iter().filter(|a| a.area == name).count()
+                + cov.skipped_areas.iter().filter(|a| a.area == name).count()
+                + cov.blocked_areas.iter().filter(|a| a.area == name).count();
+            assert_eq!(n, 1, "gate {name} must be in exactly one list");
+        }
+    }
+
+    /// Without blocked areas the coverage is what it was before this slice.
+    #[test]
+    fn build_coverage_without_blocked_areas_is_unchanged() {
+        let gates = vec![unknown_gate(GateName::Tests)];
+        let cov = build_coverage(&gates, Vec::new(), Vec::new(), Vec::new());
+        assert!(cov.blocked_areas.is_empty());
+        assert_eq!(cov.skipped_areas.len(), 1);
+        assert_eq!(cov.skipped_areas[0].area, "Tests");
+    }
+
+    // ----- validate_report with a non-empty `blocked_areas` -----
+
+    /// The golden with its `Tests` entry moved from `audited_areas` to
+    /// `blocked_areas` (referencing the golden's executed row) passes VR8 and the
+    /// other wired rules.
+    #[test]
+    fn validate_report_accepts_non_empty_blocked_areas() {
+        let mut value = golden_value();
+        let audited = value["coverage"]["audited_areas"]
+            .as_array_mut()
+            .expect("audited_areas");
+        audited.retain(|a| a["area"].as_str() != Some("Tests"));
+        value["coverage"]["blocked_areas"] = json!([{
+            "area": "Tests",
+            "blocking_condition": "infrastructure impediment",
+            "execution_result_ref": "cmd-tests"
+        }]);
+
+        let report: AuditReport =
+            serde_json::from_value(value).expect("report with blocked_areas deserializes");
+        assert_eq!(report.coverage.blocked_areas.len(), 1);
+        assert!(report
+            .coverage
+            .executed_mechanisms
+            .iter()
+            .any(|m| m.command_id == report.coverage.blocked_areas[0].execution_result_ref));
+        let violations = validate_report(&report);
+        assert!(violations.is_empty(), "got: {violations:?}");
+    }
+
+    /// The same shape built by `build_coverage` from stub-driven results.
+    #[test]
+    fn coverage_built_from_infra_results_has_intact_blocked_areas() {
+        let mechs = [discovered("cargo-test", None)];
+        let phase = run(
+            &mechs,
+            vec![(
+                "cargo-test",
+                Ok(exec_result(
+                    "cargo-test",
+                    Outcome::Error,
+                    Some(Class::InfraLevel),
+                    Some("no launcher"),
+                )),
+            )],
+        );
+        let gates = gates_from_phase(&levels(), &phase);
+        let blocked = infra_blocked_areas(&phase.executed_results, &gates);
+        assert_eq!(blocked.len(), 1);
+
+        let cov = build_coverage(&gates, phase.executed, phase.limitations, blocked);
+        // Shape and referential integrity only: the golden's gates and
+        // mappings are unrelated to this stub run, so it is not validated.
+        let report: AuditReport = serde_json::from_value(golden_value_with(&cov))
+            .expect("coverage with blocked_areas deserializes into a report");
+        assert_eq!(report.coverage.blocked_areas[0].area, "Tests");
+        assert_eq!(
+            report.coverage.blocked_areas[0].execution_result_ref.0,
+            "cargo-test"
+        );
+        assert!(
+            report
+                .coverage
+                .executed_mechanisms
+                .iter()
+                .any(|m| m.command_id == report.coverage.blocked_areas[0].execution_result_ref),
+            "referential integrity"
+        );
+        assert!(
+            !report
+                .coverage
+                .skipped_areas
+                .iter()
+                .any(|s| s.area == "Tests"),
+            "a blocked gate is not skipped"
+        );
+    }
+
+    fn golden_value_with(cov: &fira_core::coverage::CoverageStatement) -> Value {
+        let mut value = golden_value();
+        value["coverage"] = serde_json::to_value(cov).expect("coverage serializes");
+        value
     }
 }

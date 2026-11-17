@@ -4,7 +4,7 @@
 use std::fs;
 
 use fira_core::interfaces::{CapabilityError, CommandExecutor};
-use fira_core::model::{Capability, ExecutionOutcome, IdRef};
+use fira_core::model::{Capability, ExecutionClassification, ExecutionOutcome, IdRef};
 use fira_runtime::{discover, MechanismRegistry, ProjectCommandExecutor};
 use tempfile::tempdir;
 
@@ -100,8 +100,8 @@ fn run_existing_rejects_unknown_command_id() {
     assert_eq!(err, CapabilityError::NotFound("synth-rm-rf".to_string()));
 }
 
-/// EXEC-1: a discovered mechanism runs and yields a raw ExecutionResult (no §6
-/// interpretation: classification stays None, exercised_behaviors empty).
+/// EXEC-1: a discovered mechanism runs and yields a raw ExecutionResult
+/// (exercised_behaviors empty; classification follows the run facts).
 #[test]
 fn run_existing_runs_discovered_mechanism() {
     let dir = tempdir().unwrap();
@@ -115,16 +115,23 @@ fn run_existing_runs_discovered_mechanism() {
     match executor.run_existing(&IdRef("make-noop".to_string())) {
         Ok(result) => {
             assert_eq!(result.command_id, IdRef("make-noop".to_string()));
-            assert!(result.classification.is_none(), "no §6 interpretation in Task 10");
             assert!(result.exercised_behaviors.is_empty());
-            assert!(matches!(
-                result.outcome,
-                ExecutionOutcome::Passed | ExecutionOutcome::Failed
-            ));
-        }
-        Err(CapabilityError::Failed(_)) => {
-            // `make` not installed in this environment: the id still resolved
-            // (EXEC-1 passed); only the spawn failed. Acceptable for this test.
+            match result.outcome {
+                ExecutionOutcome::Passed => assert!(result.classification.is_none()),
+                ExecutionOutcome::Failed => assert_eq!(
+                    result.classification,
+                    Some(ExecutionClassification::Unclassified)
+                ),
+                ExecutionOutcome::Error => {
+                    // `make` not installed: the failed start is a result.
+                    assert_eq!(
+                        result.classification,
+                        Some(ExecutionClassification::InfraLevel)
+                    );
+                    assert!(result.blocking_condition.is_some());
+                }
+                other => panic!("unexpected outcome: {other:?}"),
+            }
         }
         Err(other) => panic!("unexpected error: {other:?}"),
     }
