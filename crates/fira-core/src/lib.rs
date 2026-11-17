@@ -103,6 +103,13 @@ pub mod gate_eval;
 /// extraction framework.
 pub mod property_audit;
 
+/// Failure classification (S5 `classification`): a pure CORE function that maps
+/// normalized, platform-neutral run facts gathered by the runtime to an S5
+/// `(outcome, classification)` pair. No I/O and no captured output; conservative
+/// (no fact yields `APP_LEVEL`; `INFRA_LEVEL` only for a FIRA-selected launcher
+/// the operating system reported as not found or not executable).
+pub mod failure_classification;
+
 /// Report provenance (S11 `determinism_inputs_hash` / `created_at`): pure
 /// canonicalization and hashing of the verdict-engine inputs (`fira-dih/1`).
 /// No clock, FS, process or network access; the clock is read by the adapter.
