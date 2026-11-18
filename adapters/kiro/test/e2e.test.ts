@@ -11,8 +11,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 
 import { runKiroAudit, proposeProfile, KiroError } from "../src/index.ts";
+import type { ProcessRunner } from "../src/index.ts";
 import type { AuditorBinary, KiroAuditRequest } from "../src/types.ts";
 
 const EXPECTED = "1.0-frozen+corr1-4";
@@ -209,5 +211,123 @@ test("AC-5a: a wrong expected contract version fails closed (VersionMismatch)", 
     );
   } finally {
     cleanup(project, workspace);
+  }
+});
+
+// --------------------------------------------------------------------------
+// P-3 — real INFRA failure: declared launcher cannot be found
+// --------------------------------------------------------------------------
+
+/**
+ * A `ProcessRunner` identical in contract to the adapter's default runner
+ * (argument vector, no shell, UTF-8, spawn errors surfaced as `status: null`),
+ * except that the child's environment is the current one with ONLY `PATH`
+ * replaced. `process.env` itself is never modified. The binary is invoked by
+ * its absolute path, so its own resolution does not depend on `PATH`.
+ */
+function runnerWithPath(pathValue: string): ProcessRunner {
+  return (command, args, options) => {
+    const result = spawnSync(command, args, {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      env: { ...process.env, PATH: pathValue },
+      ...(options?.cwd !== undefined ? { cwd: options.cwd } : {}),
+    });
+    if (result.error) {
+      return { status: null, stdout: result.stdout ?? "", stderr: String(result.error) };
+    }
+    return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  };
+}
+
+test("P-3: a missing launcher yields ERROR/INFRA rows, blocked_areas and notes in the persisted report, preserved by the adapter", () => {
+  requireBinary();
+  const project = tmp("fira-proj-make-");
+  const workspace = tmp("fira-ws-");
+  const emptyPathDir = tmp("fira-empty-path-");
+  try {
+    // Discovery is file-based: the Makefile declares the mechanisms, `make` is
+    // never needed (and, with the empty PATH below, cannot be found).
+    writeFileSync(join(project, "Makefile"), "build:\n\ttrue\ntest:\n\ttrue\nlint:\n\ttrue\n");
+
+    const res = runKiroAudit(
+      bin,
+      { projectRoot: project, releaseTarget: "v1", workspace },
+      { kind: "reclassify", profile: "cli_tool" },
+      { runner: runnerWithPath(emptyPathDir) },
+    );
+
+    // Read the persisted report independently of the adapter's response.
+    const persisted = JSON.parse(
+      readFileSync(join(res.canonicalLocation, "report.json"), "utf8"),
+    ) as {
+      technical_assessment: { result: string };
+      gates: { name: string; state: string; cause?: string }[];
+      coverage: {
+        executed_mechanisms: { command_id: string; outcome: string }[];
+        blocked_areas: { area: string; blocking_condition: string; execution_result_ref: string }[];
+        known_limitations: string[];
+      };
+    };
+
+    // Rows: every declared mechanism failed to start.
+    const ids = ["make-build", "make-test", "make-lint"];
+    for (const id of ids) {
+      const row = persisted.coverage.executed_mechanisms.find((r) => r.command_id === id);
+      assert.equal(row?.outcome, "ERROR", `${id} outcome`);
+    }
+
+    // Gates backed by those mechanisms: UNKNOWN with an INFRA cause.
+    for (const name of ["Build", "Tests"]) {
+      const g = persisted.gates.find((x) => x.name === name);
+      assert.equal(g?.state, "UNKNOWN", `${name} state`);
+      assert.equal(g?.cause, "INFRA", `${name} cause`);
+    }
+    assert.ok(
+      persisted.gates
+        .filter((g) => g.name !== "Build" && g.name !== "Tests")
+        .every((g) => g.cause !== "INFRA"),
+      "only Build and Tests have an INFRA cause",
+    );
+
+    // blocked_areas: exactly Build -> make-build and Tests -> make-test.
+    const blocked = persisted.coverage.blocked_areas;
+    assert.deepEqual(
+      blocked.map((b) => [b.area, b.execution_result_ref]).sort(),
+      [
+        ["Build", "make-build"],
+        ["Tests", "make-test"],
+      ],
+    );
+    for (const b of blocked) {
+      assert.ok(
+        persisted.coverage.executed_mechanisms.some((r) => r.command_id === b.execution_result_ref),
+        `dangling execution_result_ref ${b.execution_result_ref}`,
+      );
+      assert.ok(b.blocking_condition.length > 0, `blocking_condition for ${b.area}`);
+    }
+    assert.ok(!blocked.some((b) => b.execution_result_ref === "make-lint"), "make-lint is not blocked");
+
+    // Notes: one per ERROR mechanism, INFRA-classified and hedged.
+    for (const id of ids) {
+      const notes = persisted.coverage.known_limitations.filter((l) => l.includes(`'${id}'`));
+      assert.equal(notes.length, 1, `exactly one note for ${id}`);
+      assert.ok(notes[0]!.includes("could not be started (outcome ERROR, INFRA_LEVEL)"), notes[0]);
+      assert.ok(notes[0]!.includes("exact cause is not established"), notes[0]);
+      assert.ok(!notes[0]!.includes("APP_LEVEL"), notes[0]);
+    }
+
+    assert.equal(persisted.technical_assessment.result, "NOT_READY");
+
+    // The adapter's projection preserves the persisted data.
+    assert.deepEqual(res.gates, persisted.gates);
+    assert.deepEqual(res.coverage, persisted.coverage);
+    const projectedCauses = res.gates
+      .filter((g) => g.name === "Build" || g.name === "Tests")
+      .map((g) => (g as unknown as { cause?: string }).cause);
+    assert.deepEqual(projectedCauses, ["INFRA", "INFRA"]);
+    assert.equal(res.technicalAssessment.result, "NOT_READY");
+  } finally {
+    cleanup(project, workspace, emptyPathDir);
   }
 });

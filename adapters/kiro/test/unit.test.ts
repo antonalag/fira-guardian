@@ -1,9 +1,15 @@
 // Unit tests for the Kiro adapter — pure logic with a FAKE process runner.
-// No real binary, no filesystem writes, no network. Covers AC-2 (marshalling),
-// AC-5a (version pin), AC-6 (errors), and the §9.2 read-only projection.
+// No real binary and no network. The tests write no files, except the P-3
+// projection test, which writes report.json/report.md into a temporary
+// directory outside the repository and removes it in `finally`. Covers AC-2
+// (marshalling), AC-5a (version pin), AC-6 (errors), and the §9.2 read-only
+// projection.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
 
 import { proposeArgs, runArgs, assertProfileId } from "../src/marshal.ts";
 import { binaryCommand, parseContractVersion, resolveAndVerify } from "../src/discovery.ts";
@@ -201,4 +207,170 @@ test("AC-6: a malformed success (no canonical location line) fails closed", () =
     () => runKiroAudit(bin, baseReq, { kind: "confirmProposed" }, { runner: run }),
     (e: unknown) => e instanceof KiroError && e.kind === "MalformedOutput",
   );
+});
+
+// --------------------------------------------------------------------------
+// P-3 (failure-classification-slice): success-path projection of INFRA-shaped
+// fields through runKiroAudit, with a FAKE runner and a controlled report.json.
+//
+// WHAT THIS PROVES: the TypeScript adapter returns `gates[].cause`,
+// `coverage.blocked_areas` and `coverage.known_limitations` unchanged, and that
+// `machineReport`/`humanReport` are the exact bytes read from disk. Expected
+// values are written as independent literals in the assertions (not derived by
+// re-parsing the same file).
+//
+// WHAT THIS DOES NOT PROVE: that Rust produces these values or classifies INFRA
+// correctly (see crates/fira-adapters/tests/failure_classification_e2e.rs,
+// e2_persisted_report_contains_error_rows_and_blocked_areas, and
+// crates/fira-core/tests/gate_eval_classification.rs). It does not validate the
+// fixture against the S11 schema: the fixture carries only the seven top-level
+// keys `projectReport` requires (src/index.ts), so it is NOT a complete S11
+// report. The fixture is hand-written; it is not evidence of any real audit.
+//
+// Fixture references (Rust contract, read on commit 66be267):
+//  - top-level keys: src/index.ts `projectReport`; crates/fira-core/src/report.rs
+//    `AuditReport` (schema_version, audit_id, findings, gates, coverage,
+//    technical_assessment, human_decision)
+//  - Gate fields: crates/fira-core/src/gate.rs `Gate` (name, requirement_level,
+//    state, rationale, cause?, support_mappings, supporting_findings)
+//  - GateCause `APP|INFRA|NONE`: crates/fira-core/src/model/enums.rs
+//  - SupportMapping fields: crates/fira-core/src/evidence.rs `SupportMapping`;
+//    shape of the INFRA mapping: crates/fira-core/src/gate_eval/mod.rs
+//    `support_mapping_for` (InconclusiveInfra)
+//  - CoverageStatement / BlockedArea / ExecutedMechanism:
+//    crates/fira-core/src/coverage.rs (all seven coverage arrays present)
+//  - blocked area naming (`area` = gate name, `execution_result_ref` = command
+//    id): crates/fira-adapters/src/cli.rs `infra_blocked_areas`
+//  - ERROR/INFRA note text copied from crates/fira-adapters/src/cli.rs
+//    `error_note` (InfraLevel branch)
+//  - assessment fields and `computed_by_rule`: crates/fira-core/src/assessment.rs
+//    `TechnicalAssessment`; crates/fira-adapters/src/cli.rs `run_audit`
+//  - valid-value shapes: schemas/examples/valid/s11-audit-report.json
+// --------------------------------------------------------------------------
+
+test("P-3: runKiroAudit projects INFRA cause, blocked_areas and notes unchanged (fake runner, controlled report)", () => {
+  const infraNote = (id: string): string =>
+    `Declared verification mechanism '${id}' could not be started (outcome ERROR, INFRA_LEVEL): ` +
+    "the operating system reported that a launcher selected by FIRA could not be found or " +
+    "executed (attribution based on the operating system error kind only; the exact cause is " +
+    "not established); the mechanism was not executed and provides no evidence.";
+  const infraGate = (name: string, id: string) => ({
+    name,
+    requirement_level: "required",
+    state: "UNKNOWN",
+    rationale: `fixture rationale for ${name}`,
+    cause: "INFRA",
+    support_mappings: [
+      {
+        claim: `declared mechanism ${id} executed with outcome Error`,
+        evidence_refs: [id],
+        relevant_span: "Makefile:1",
+        sufficiency: "INSUFFICIENT",
+        unverified_remainder:
+          "mechanism could not be evaluated because of an infrastructure impediment " +
+          "(Error, INFRA_LEVEL); it provides no evidence about the application",
+      },
+    ],
+    supporting_findings: [],
+  });
+  const report = {
+    schema_version: "1.0.0",
+    audit_id: "audit-fixture-p3",
+    findings: [],
+    gates: [infraGate("Build", "make-build"), infraGate("Tests", "make-test")],
+    coverage: {
+      audited_areas: [],
+      skipped_areas: [],
+      blocked_areas: [
+        { area: "Build", blocking_condition: "fixture blocking condition (build)", execution_result_ref: "make-build" },
+        { area: "Tests", blocking_condition: "fixture blocking condition (tests)", execution_result_ref: "make-test" },
+      ],
+      executed_mechanisms: [
+        { command_id: "make-build", outcome: "ERROR" },
+        { command_id: "make-test", outcome: "ERROR" },
+      ],
+      known_limitations: [infraNote("make-build"), infraNote("make-test")],
+      assumptions: [],
+      unanchored_hypotheses: [],
+    },
+    technical_assessment: {
+      result: "NOT_READY",
+      blocking_findings: [],
+      blocking_gates: ["Build", "Tests"],
+      risk_findings: [],
+      risk_gates: [],
+      computed_by_rule: "verdict-engine/§11",
+    },
+    human_decision: { state: "PENDING" },
+  };
+  const reportText = JSON.stringify(report, null, 2) + "\n";
+  const markdownText = "# fixture report.md (not produced by FIRA)\n";
+
+  // The directory must be outside the repository (never write into the project).
+  const repoRoot = resolve(import.meta.dirname, "..", "..", "..");
+  const dir = mkdtempSync(join(tmpdir(), "fira-p3-proj-"));
+  try {
+    assert.ok(
+      !(dir + sep).startsWith(repoRoot + sep),
+      "temp dir must be outside the repository",
+    );
+    writeFileSync(join(dir, "report.json"), reportText);
+    writeFileSync(join(dir, "report.md"), markdownText);
+
+    const run = fakeRunner({
+      audit: () => ({
+        status: 0,
+        stdout: "",
+        stderr: `canonical audit-workspace artifacts: ${dir}\n`,
+      }),
+    });
+    const res = runKiroAudit(bin, baseReq, { kind: "confirmProposed" }, { runner: run });
+
+    // Canonical bytes are returned exactly as written.
+    assert.equal(res.canonicalLocation, dir);
+    assert.equal(res.machineReport, reportText);
+    assert.equal(res.humanReport, markdownText);
+
+    // gates[].cause (not modeled in the TS `Gate` type, so read through a cast).
+    const causes = res.gates.map((g) => [g.name, g.state, (g as unknown as { cause?: string }).cause]);
+    assert.deepEqual(causes, [
+      ["Build", "UNKNOWN", "INFRA"],
+      ["Tests", "UNKNOWN", "INFRA"],
+    ]);
+
+    // coverage.blocked_areas: area, blocking_condition, execution_result_ref.
+    assert.deepEqual(res.coverage.blocked_areas, [
+      {
+        area: "Build",
+        blocking_condition: "fixture blocking condition (build)",
+        execution_result_ref: "make-build",
+      },
+      {
+        area: "Tests",
+        blocking_condition: "fixture blocking condition (tests)",
+        execution_result_ref: "make-test",
+      },
+    ]);
+
+    // coverage.known_limitations: both INFRA notes, complete and in order.
+    // Expected values are independent literals (not built with `infraNote`).
+    assert.equal(res.coverage.known_limitations.length, 2);
+    assert.deepEqual(res.coverage.known_limitations, [
+      "Declared verification mechanism 'make-build' could not be started (outcome ERROR, INFRA_LEVEL): the operating system reported that a launcher selected by FIRA could not be found or executed (attribution based on the operating system error kind only; the exact cause is not established); the mechanism was not executed and provides no evidence.",
+      "Declared verification mechanism 'make-test' could not be started (outcome ERROR, INFRA_LEVEL): the operating system reported that a launcher selected by FIRA could not be found or executed (attribution based on the operating system error kind only; the exact cause is not established); the mechanism was not executed and provides no evidence.",
+    ]);
+
+    // Other projected sub-objects keep their literal values.
+    assert.deepEqual(res.coverage.executed_mechanisms, [
+      { command_id: "make-build", outcome: "ERROR" },
+      { command_id: "make-test", outcome: "ERROR" },
+    ]);
+    assert.equal(res.technicalAssessment.result, "NOT_READY");
+    assert.deepEqual(res.technicalAssessment.blocking_gates, ["Build", "Tests"]);
+    assert.equal(res.humanDecision.state, "PENDING");
+    assert.deepEqual(res.findings, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.ok(!existsSync(dir), "temp dir is removed");
 });
